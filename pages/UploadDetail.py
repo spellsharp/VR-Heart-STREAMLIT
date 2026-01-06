@@ -51,9 +51,9 @@ except Exception as e:
     st.error(f"Failed to load: {e}")
     st.stop()
 
-st.markdown(f"**ID:** `{detail.get('id')}`")
+# st.markdown(f"**ID:** `{detail.get('id')}`")
 st.markdown(f"**Original filename:** {detail.get('original_filename')}")
-st.markdown(f"**Segmentation model:** `{detail.get('segmentation_model','')}`")
+# st.markdown(f"**Segmentation model:** `{detail.get('segmentation_model','')}`")
 ds = detail.get("duration_seconds")
 st.markdown(f"**Duration:** {ds:.1f}s" if ds is not None else "**Duration:** —")
 

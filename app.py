@@ -68,16 +68,11 @@ doctor_email = ""
 
 # --- Model Selection ---
 st.markdown("### 🧠 Model Selection")
-segmentation_model = st.selectbox(
-    "Segmentation Model", 
-    ["cc5csf7l_vd80", "l6921zay_vd74"],
-    index=0,
-    help="Select the cardiac segmentation model (uses 45wq9ozw_vd83 for bloodpool)"
-)
+
 disable_segmentation = st.checkbox(
-    "Disable chamber-vessel segmentation",
+    "Bloodpool only",
     value=False,
-    help="Disabling chamber-vessel segmentation will produce only bloodpool segmentation. Use for faster bloodpool output."
+    help="Produces only bloodpool segmentation. Use for faster bloodpool output."
 )
 # --- Stopwatch Placeholder ---
 stopwatch_placeholder = st.empty()
@@ -89,7 +84,6 @@ def create_pending_upload():
             "doctor_name": doctor_name,
             "doctor_email": doctor_email,
             "original_filename": uploaded_file.name if uploaded_file else "",
-            "segmentation_model": f"{segmentation_model}.ckpt",
             "disable_segmentation": str(disable_segmentation).lower(),
         }
         resp = requests.post(f"{backend_url}/api/uploads/pending/", data=payload, timeout=30)
@@ -140,7 +134,6 @@ if uploaded_file and st.button("🚀 Run Inference"):
                 request_data = {
                     "doctor_name": doctor_name,
                     "doctor_email": doctor_email,
-                    "segmentation_model": f"{segmentation_model}.ckpt",
                     "generate_stl": True,
                     "include_dicom": False,
                     "run_segmentation": not disable_segmentation,

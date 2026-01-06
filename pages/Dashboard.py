@@ -27,13 +27,10 @@ def build_detail_url(upload_id):
     return f"{DETAIL_PAGE_ROUTE}?{urlencode({'id': str(upload_id)})}"
 
 st.caption("List of previous uploads and outputs.")
-delete_drive_flag = st.checkbox(
-    "Also delete Google Drive files (if configured)",
-    value=False,
-    key="dashboard_delete_drive",
-)
 
-@st.cache_data(ttl=30)
+delete_drive_flag = True
+
+@st.cache_data(ttl=30, show_spinner=False)
 def fetch_uploads(api_base: str):
     try:
         resp = requests.get(f"{api_base}/api/uploads/", timeout=30)
@@ -54,7 +51,8 @@ def delete_upload_record(api_base: str, upload_id: str, delete_drive: bool = Fal
     resp.raise_for_status()
     return resp.json()
 
-uploads = fetch_uploads(backend_url)
+with st.spinner("Loading uploads…"):
+    uploads = fetch_uploads(backend_url)
 
 if not uploads:
     st.info("No uploads found yet.")
@@ -63,7 +61,7 @@ else:
         with st.container(border=True):
             cols = st.columns([3, 2, 2, 2, 2, 2, 1])
             cols[0].markdown(f"**{u.get('original_filename', '')}**")
-            cols[1].markdown(f"Model: `{u.get('segmentation_model', '')}`")
+            # cols[1].markdown(f"Model: `{u.get('segmentation_model', '')}`")
             d = u.get("duration_seconds")
             cols[2].markdown(f"Time: {d:.1f}s" if d is not None else "Time: —")
             created = u.get("created_at")
