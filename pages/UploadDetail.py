@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 import requests
 
@@ -15,6 +16,27 @@ def build_drive_link(file_id: str | None) -> str | None:
     if not file_id:
         return None
     return f"https://drive.google.com/uc?export=download&id={file_id}"
+
+
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
+
+
+def is_image_attachment(attachment: dict) -> bool:
+    """Return True if attachment looks like an image based on MIME type or file extension."""
+    content_type = (attachment.get("content_type") or attachment.get("mime_type") or "").lower()
+    if content_type.startswith("image/"):
+        return True
+    filename = (attachment.get("filename") or "").lower()
+    _, ext = os.path.splitext(filename)
+    return ext in IMAGE_EXTENSIONS
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_attachment_bytes(url: str) -> bytes:
+    """Download attachment data so we can preview images inline."""
+    resp = requests.get(url, timeout=120)
+    resp.raise_for_status()
+    return resp.content
 
 
 params = st.query_params
@@ -83,13 +105,27 @@ try:
             st.write(fb.get("text") or "")
             for att in fb.get("attachments") or []:
                 download_url = att.get("download_url") or build_drive_link(att.get("drive_file_id"))
+                filename = att.get("filename") or "Attachment"
                 if download_url:
-                    st.link_button(
-                        f"Download {att.get('filename')}",
-                        url=download_url,
-                    )
+                    if is_image_attachment(att):
+                        try:
+                            image_bytes = fetch_attachment_bytes(download_url)
+                        except Exception as exc:
+                            st.caption(f"Could not preview {filename}: {exc}")
+                            st.link_button(
+                                f"Download {filename}",
+                                url=download_url,
+                            )
+                        else:
+                            st.image(image_bytes, caption=filename, use_container_width=True)
+                            st.caption(f"[Download original]({download_url})")
+                    else:
+                        st.link_button(
+                            f"Download {filename}",
+                            url=download_url,
+                        )
                 else:
-                    st.caption(f"{att.get('filename')} unavailable for download.")
+                    st.caption(f"{filename} unavailable for download.")
     if len(items) == 0:
         st.markdown("No feedback has been submitted yet.")
 except Exception:
@@ -100,12 +136,12 @@ st.divider()
 st.subheader("Add Feedback")
 with st.form("feedback_form", clear_on_submit=True):
     author_name = st.text_input("Your name", value="")
-    author_email = st.text_input("Your email (optional)", value="")
+    # author_email = st.text_input("Your email (optional)", value="")
     text = st.text_area("Feedback", height=150)
     attachments = st.file_uploader("Screenshots / attachments", accept_multiple_files=True)
     if st.form_submit_button("Submit Feedback"):
         try:
-            payload = {"author_name": author_name, "author_email": author_email, "text": text}
+            payload = {"author_name": author_name, "author_email": "", "text": text}
             files = []
             for file in attachments or []:
                 files.append(
