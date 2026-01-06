@@ -117,7 +117,7 @@ else:
                 st.session_state[f"pending_delete_{upload_id}"] = True
                 st.rerun()
             detail_url = build_detail_url(u.get("id"))
-            if detail_url:
+            if detail_url and status == "Completed":
                 st.link_button("Open ▶️", url=detail_url, icon="🔍")
             else:
                 st.caption("Missing upload ID; detail page unavailable.")
