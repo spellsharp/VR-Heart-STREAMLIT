@@ -119,7 +119,5 @@ else:
             detail_url = build_detail_url(u.get("id"))
             if detail_url and status == "Completed":
                 st.link_button("Open ▶️", url=detail_url, icon="🔍")
-            else:
-                st.caption("Missing upload ID; detail page unavailable.")
 
 
