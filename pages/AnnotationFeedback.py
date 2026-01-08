@@ -369,7 +369,7 @@ def open_feedback_dialog(img_rgb, view_name, slice_num, original_filename, mask_
             f"shape={img_rgb.shape}, dtype={img_rgb.dtype}, "
             f"min={int(np.min(img_rgb))}, max={int(np.max(img_rgb))}"
         )
-    logger.info(
+    logger.warning(
         "Opening feedback dialog | upload=%s | view=%s | slice=%s | mask=%s | %s",
         upload_id or "N/A",
         view_name,
