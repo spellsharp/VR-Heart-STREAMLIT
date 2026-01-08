@@ -75,16 +75,7 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 
-class NamedBytesIO(io.BytesIO):
-    """BytesIO wrapper that keeps the original filename for downstream UI."""
-
-    def __init__(self, buffer: bytes, name: str):
-        super().__init__(buffer)
-        self._name = name
-
-    @property
-    def name(self) -> str:
-        return self._name
+MAX_ARCHIVE_CACHE_ITEMS = 2
 
 
 def fetch_upload_detail(api_base: str, upload_id: str):
@@ -93,15 +84,44 @@ def fetch_upload_detail(api_base: str, upload_id: str):
     return resp.json()
 
 
-def fetch_upload_archive(api_base: str, upload_id: str, kind: str) -> bytes:
-    print("Downloading the zip file from the drive...")
+def fetch_upload_archive(api_base: str, upload_id: str, kind: str, filename_hint: str | None = None) -> dict:
+    """Stream a Drive archive to a temp file to avoid keeping huge blobs in RAM."""
+    logger.info(
+        "Downloading archive | upload=%s | kind=%s | filename_hint=%s",
+        upload_id,
+        kind,
+        filename_hint or "unknown.zip",
+    )
     resp = requests.get(
         f"{api_base}/api/uploads/{upload_id}/download/",
         params={"kind": kind},
+        stream=True,
         timeout=600,
     )
     resp.raise_for_status()
-    return resp.content
+    suffix = ".zip"
+    if filename_hint:
+        _, ext = os.path.splitext(filename_hint)
+        if ext:
+            suffix = ext
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        for chunk in resp.iter_content(chunk_size=8 * 1024 * 1024):
+            if chunk:
+                tmp.write(chunk)
+        temp_path = tmp.name
+    size_bytes = os.path.getsize(temp_path)
+    logger.info(
+        "Archive downloaded | upload=%s | kind=%s | path=%s | size_mb=%.2f",
+        upload_id,
+        kind,
+        temp_path,
+        size_bytes / (1024 * 1024),
+    )
+    return {
+        "path": temp_path,
+        "filename": filename_hint or os.path.basename(temp_path),
+        "size": size_bytes,
+    }
 
 
 def get_cached_upload_detail(api_base: str, upload_id: str):
@@ -113,13 +133,33 @@ def get_cached_upload_detail(api_base: str, upload_id: str):
     return cache[key]
 
 
-def get_cached_upload_archive(api_base: str, upload_id: str, kind: str) -> bytes:
-    """Download archives once per Streamlit session."""
+def get_cached_upload_archive(api_base: str, upload_id: str, kind: str, filename_hint: str | None = None) -> dict:
+    """Download archives once per Streamlit session (stored on disk, not in RAM)."""
     cache = st.session_state.setdefault("_archive_cache", {})
+    order = st.session_state.setdefault("_archive_cache_order", [])
     key = f"{api_base}:{upload_id}:{kind}"
-    if key not in cache:
-        cache[key] = fetch_upload_archive(api_base, upload_id, kind)
-    return cache[key]
+    entry = cache.get(key)
+    if entry and os.path.exists(entry.get("path", "")):
+        if key in order:
+            order.remove(key)
+        order.append(key)
+        return entry
+
+    entry = fetch_upload_archive(api_base, upload_id, kind, filename_hint)
+    cache[key] = entry
+    order.append(key)
+
+    while len(order) > MAX_ARCHIVE_CACHE_ITEMS:
+        old_key = order.pop(0)
+        old_entry = cache.pop(old_key, None)
+        if old_entry:
+            old_path = old_entry.get("path")
+            if old_path and os.path.exists(old_path):
+                try:
+                    os.remove(old_path)
+                except OSError as exc:
+                    logger.warning("Failed to remove cached archive %s: %s", old_path, exc)
+    return entry
 
 # --- Core Medical Image Functions ---
 
@@ -239,23 +279,32 @@ def process_slice(slice_data, label_slice, level, width, aspect_ratio=1.0, color
     return img_rgb
 
 
-def ensure_volume_loaded(zip_file, source_key: str) -> bool:
+def ensure_volume_loaded(zip_source, source_key: str, original_filename: str | None = None) -> bool:
     """Load DICOM volume into session state if the source has changed."""
-    if not zip_file or not source_key:
+    if not zip_source or not source_key:
         return False
     if st.session_state.get("dicom_source_key") == source_key:
         return True
 
+    zip_target = zip_source
     try:
-        zip_file.seek(0)
+        if hasattr(zip_target, "seek"):
+            zip_target.seek(0)
     except Exception:
         pass
 
     with st.spinner("Loading DICOM volume..."):
-        vol, spacing, dicom_image = load_dicom_series(zip_file)
+        vol, spacing, dicom_image = load_dicom_series(zip_target)
     if vol is None or spacing is None or dicom_image is None:
         st.error("Failed to parse the provided DICOM ZIP.")
         return False
+
+    inferred_name = original_filename
+    if not inferred_name:
+        if isinstance(zip_target, (str, os.PathLike)):
+            inferred_name = os.path.basename(zip_target)
+        else:
+            inferred_name = getattr(zip_target, "name", "dicom.zip")
 
     st.session_state.update(
         {
@@ -263,7 +312,7 @@ def ensure_volume_loaded(zip_file, source_key: str) -> bool:
             "spacing": spacing,
             "dicom_image": dicom_image,
             "dicom_source_key": source_key,
-            "dicom_filename": getattr(zip_file, "name", "dicom.zip"),
+            "dicom_filename": inferred_name or "dicom.zip",
             "masks": {},
             "active_mask": "None",
         }
@@ -271,11 +320,24 @@ def ensure_volume_loaded(zip_file, source_key: str) -> bool:
     return True
 
 
-def extract_masks_from_zip(zip_bytes: bytes, dicom_image):
-    if not zip_bytes or dicom_image is None:
+def extract_masks_from_zip(zip_source, dicom_image):
+    if not zip_source or dicom_image is None:
         return {}
+    if isinstance(zip_source, dict):
+        zip_source = zip_source.get("path")
+    if isinstance(zip_source, (str, os.PathLike)):
+        if not os.path.exists(zip_source):
+            logger.warning("Mask archive missing on disk: %s", zip_source)
+            return {}
+        archive_target = zip_source
+    else:
+        try:
+            zip_source.seek(0)
+            archive_target = zip_source
+        except AttributeError:
+            archive_target = io.BytesIO(zip_source)
     extracted = {}
-    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
+    with zipfile.ZipFile(archive_target) as archive:
         for info in archive.infolist():
             name = info.filename
             lower = name.lower()
@@ -508,15 +570,17 @@ width = st.sidebar.slider("Window Width", 1, 2000, 400)
 
 status_placeholder = st.empty()
 drive_detail = None
-drive_zip = None
-results_zip_bytes = None
+drive_zip_entry = None
+drive_zip_path = None
+drive_filename = None
+results_zip_entry = None
 
 if active_upload_id:
     try:
         with st.spinner("Fetching study from Drive..."):
             drive_detail = get_cached_upload_detail(backend_url, active_upload_id)
             download_kind = "input"
-            filename = (
+            download_filename = (
                 drive_detail.get("input_filename")
                 or drive_detail.get("original_filename")
                 or f"{active_upload_id}.zip"
@@ -524,27 +588,43 @@ if active_upload_id:
             if not drive_detail.get("drive_input_file_id"):
                 if drive_detail.get("drive_combined_file_id"):
                     download_kind = "combined"
-                    filename = drive_detail.get("combined_filename") or filename
+                    download_filename = drive_detail.get("combined_filename") or download_filename
                 elif drive_detail.get("drive_output_file_id"):
                     download_kind = "output"
-                    filename = drive_detail.get("output_filename") or filename
+                    download_filename = drive_detail.get("output_filename") or download_filename
                 else:
                     raise ValueError("This upload does not have any downloadable archives yet.")
-            zip_bytes = get_cached_upload_archive(backend_url, active_upload_id, download_kind)
-            drive_zip = NamedBytesIO(zip_bytes, filename)
+            drive_zip_entry = get_cached_upload_archive(
+                backend_url,
+                active_upload_id,
+                download_kind,
+                download_filename,
+            )
+            drive_zip_path = drive_zip_entry.get("path")
+            drive_filename = drive_zip_entry.get("filename") or download_filename
 
             mask_kind = None
             if drive_detail.get("drive_combined_file_id"):
                 mask_kind = "combined"
             elif drive_detail.get("drive_output_file_id"):
                 mask_kind = "output"
+            mask_filename = None
+            if mask_kind == "combined":
+                mask_filename = drive_detail.get("combined_filename") or drive_filename
+            elif mask_kind == "output":
+                mask_filename = drive_detail.get("output_filename") or drive_filename
 
             if mask_kind:
                 if mask_kind == download_kind:
-                    results_zip_bytes = zip_bytes
+                    results_zip_entry = drive_zip_entry
                 else:
-                    results_zip_bytes = get_cached_upload_archive(backend_url, active_upload_id, mask_kind)
-        status_placeholder.success(f"Loaded {filename} from Drive.")
+                    results_zip_entry = get_cached_upload_archive(
+                        backend_url,
+                        active_upload_id,
+                        mask_kind,
+                        mask_filename,
+                    )
+        status_placeholder.success(f"Loaded {drive_filename or download_filename} from Drive.")
     except requests.HTTPError as exc:
         detail_msg = exc.response.text if exc.response is not None else str(exc)
         status_placeholder.error(f"Failed to load upload {active_upload_id}: {detail_msg}")
@@ -560,20 +640,20 @@ if active_upload_id:
         for key in ["vol", "spacing", "dicom_image", "dicom_source_key", "dicom_filename"]:
             st.session_state.pop(key, None)
 
-dicom_zip = drive_zip
+dicom_zip = drive_zip_path
 dicom_source_key = None
-if drive_zip and active_upload_id:
+if drive_zip_path and active_upload_id:
     dicom_source_key = f"drive:{active_upload_id}:{download_kind}"
 
 volume_ready = False
 if dicom_zip and dicom_source_key:
-    volume_ready = ensure_volume_loaded(dicom_zip, dicom_source_key)
+    volume_ready = ensure_volume_loaded(dicom_zip, dicom_source_key, drive_filename)
 elif st.session_state.get("vol") is not None:
     volume_ready = True
 
 dicom_filename = st.session_state.get(
     "dicom_filename",
-    getattr(dicom_zip, "name", "dicom.zip") if dicom_zip else "dicom.zip",
+    drive_filename or (os.path.basename(dicom_zip) if isinstance(dicom_zip, (str, os.PathLike)) else "dicom.zip"),
 )
 
 if volume_ready:
@@ -586,8 +666,8 @@ if volume_ready:
 
     dicom_key = st.session_state.get("dicom_source_key")
     auto_key = st.session_state.get("auto_mask_source")
-    if results_zip_bytes and dicom_key and dicom_key != auto_key:
-        auto_masks = extract_masks_from_zip(results_zip_bytes, dicom_image)
+    if results_zip_entry and dicom_key and dicom_key != auto_key:
+        auto_masks = extract_masks_from_zip(results_zip_entry, dicom_image)
         if auto_masks:
             masks.update(auto_masks)
             st.session_state["auto_mask_source"] = dicom_key
