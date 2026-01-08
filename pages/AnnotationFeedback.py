@@ -8,12 +8,15 @@ import tempfile
 import json
 import io
 import base64
+import logging
 import requests
 from streamlit_drawable_canvas import st_canvas
 from PIL import Image
 
 st.set_page_config(layout="wide", page_title="Annotator And Feedback")
 backend_url = st.secrets["BACKEND_URL"]
+logger = logging.getLogger("annotation_feedback")
+logger.setLevel(logging.INFO)
 
 st.markdown(
     """
@@ -298,11 +301,33 @@ def extract_masks_from_zip(zip_bytes: bytes, dicom_image):
 
 @st.dialog("Feedback Drawing Tool", width="large")
 def open_feedback_dialog(img_rgb, view_name, slice_num, original_filename, mask_name=None, upload_id: str | None = None):
+    array_details = "unavailable"
+    if isinstance(img_rgb, np.ndarray):
+        array_details = (
+            f"shape={img_rgb.shape}, dtype={img_rgb.dtype}, "
+            f"min={int(np.min(img_rgb))}, max={int(np.max(img_rgb))}"
+        )
+    logger.info(
+        "Opening feedback dialog | upload=%s | view=%s | slice=%s | mask=%s | %s",
+        upload_id or "N/A",
+        view_name,
+        slice_num,
+        mask_name or "None",
+        array_details,
+    )
     mask_info = f" (Mask: **{mask_name}**)" if mask_name and mask_name != "None" else " (No Mask)"
     st.write(f"Annotating **{view_name}** - Slice **{slice_num}**{mask_info}")
     
     # Convert numpy array to PIL Image
     bg_pil = Image.fromarray(img_rgb)
+    logger.info(
+        "bg_pil ready | mode=%s | size=%s | upload=%s | view=%s | slice=%s",
+        bg_pil.mode,
+        bg_pil.size,
+        upload_id or "N/A",
+        view_name,
+        slice_num,
+    )
     
     # Convert image to base64 for HTML embedding
     buffered = io.BytesIO()
@@ -311,6 +336,12 @@ def open_feedback_dialog(img_rgb, view_name, slice_num, original_filename, mask_
     
     canvas_height = img_rgb.shape[0]
     canvas_width = img_rgb.shape[1]
+    logger.info(
+        "Canvas dimensions | width=%s | height=%s | key=%s",
+        canvas_width,
+        canvas_height,
+        f"canvas_{view_name}_{slice_num}",
+    )
     
     col_ctrl, col_canvas, col_feedback = st.columns([1, 3, 1.5])
     
@@ -357,9 +388,16 @@ def open_feedback_dialog(img_rgb, view_name, slice_num, original_filename, mask_
     
     if submit_clicked:
         if not annotator_name.strip():
+            logger.warning("Feedback submit blocked due to missing name | view=%s | slice=%s", view_name, slice_num)
             st.error("Name is required to submit feedback.")
             return
         if canvas_result.image_data is None:
+            logger.warning(
+                "Canvas has no image data | upload=%s | view=%s | slice=%s",
+                upload_id or "N/A",
+                view_name,
+                slice_num,
+            )
             st.warning("No drawing data available.")
             return
 
@@ -407,6 +445,12 @@ def open_feedback_dialog(img_rgb, view_name, slice_num, original_filename, mask_
         else:
             with st.spinner("Submitting feedback to dashboard..."):
                 try:
+                    logger.info(
+                        "Submitting feedback | upload=%s | file=%s | payload_has_text=%s",
+                        upload_id,
+                        fname,
+                        bool(text_feedback),
+                    )
                     resp = requests.post(
                         f"{backend_url}/api/uploads/{upload_id}/feedback/",
                         data=payload,
@@ -414,9 +458,11 @@ def open_feedback_dialog(img_rgb, view_name, slice_num, original_filename, mask_
                         timeout=300,
                     )
                 except requests.RequestException as exc:
+                    logger.exception("Feedback submission failed | upload=%s | error=%s", upload_id, exc)
                     st.error(f"Failed to submit feedback: {exc}")
                 else:
                     if resp.status_code in (200, 201):
+                        logger.info("Feedback submitted successfully | upload=%s | status=%s", upload_id, resp.status_code)
                         st.success("✅ Feedback submitted to dashboard.")
                     else:
                         detail_msg = ""
