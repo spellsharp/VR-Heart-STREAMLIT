@@ -84,14 +84,12 @@ class NamedBytesIO(io.BytesIO):
         return self._name
 
 
-@st.cache_data(show_spinner=False)
 def fetch_upload_detail(api_base: str, upload_id: str):
     resp = requests.get(f"{api_base}/api/uploads/{upload_id}/", timeout=120)
     resp.raise_for_status()
     return resp.json()
 
 
-@st.cache_data(show_spinner=False)
 def fetch_upload_archive(api_base: str, upload_id: str, kind: str) -> bytes:
     print("Downloading the zip file from the drive...")
     resp = requests.get(
@@ -101,6 +99,24 @@ def fetch_upload_archive(api_base: str, upload_id: str, kind: str) -> bytes:
     )
     resp.raise_for_status()
     return resp.content
+
+
+def get_cached_upload_detail(api_base: str, upload_id: str):
+    """Fetch upload detail once per Streamlit session."""
+    cache = st.session_state.setdefault("_detail_cache", {})
+    key = f"{api_base}:{upload_id}"
+    if key not in cache:
+        cache[key] = fetch_upload_detail(api_base, upload_id)
+    return cache[key]
+
+
+def get_cached_upload_archive(api_base: str, upload_id: str, kind: str) -> bytes:
+    """Download archives once per Streamlit session."""
+    cache = st.session_state.setdefault("_archive_cache", {})
+    key = f"{api_base}:{upload_id}:{kind}"
+    if key not in cache:
+        cache[key] = fetch_upload_archive(api_base, upload_id, kind)
+    return cache[key]
 
 # --- Core Medical Image Functions ---
 
@@ -452,7 +468,7 @@ results_zip_bytes = None
 if active_upload_id:
     try:
         with st.spinner("Fetching study from Drive..."):
-            drive_detail = fetch_upload_detail(backend_url, active_upload_id)
+            drive_detail = get_cached_upload_detail(backend_url, active_upload_id)
             download_kind = "input"
             filename = (
                 drive_detail.get("input_filename")
@@ -468,9 +484,7 @@ if active_upload_id:
                     filename = drive_detail.get("output_filename") or filename
                 else:
                     raise ValueError("This upload does not have any downloadable archives yet.")
-            archive_cache: dict[str, bytes] = {}
-            zip_bytes = fetch_upload_archive(backend_url, active_upload_id, download_kind)
-            archive_cache[download_kind] = zip_bytes
+            zip_bytes = get_cached_upload_archive(backend_url, active_upload_id, download_kind)
             drive_zip = NamedBytesIO(zip_bytes, filename)
 
             mask_kind = None
@@ -483,7 +497,7 @@ if active_upload_id:
                 if mask_kind == download_kind:
                     results_zip_bytes = zip_bytes
                 else:
-                    results_zip_bytes = fetch_upload_archive(backend_url, active_upload_id, mask_kind)
+                    results_zip_bytes = get_cached_upload_archive(backend_url, active_upload_id, mask_kind)
         status_placeholder.success(f"Loaded {filename} from Drive.")
     except requests.HTTPError as exc:
         detail_msg = exc.response.text if exc.response is not None else str(exc)
