@@ -3,6 +3,6 @@ requests>=2.31
 SimpleITK>=2.3
 numpy>=1.26
 opencv-python-headless>=4.9
-streamlit-drawable-canvas>=0.9
+streamlit-drawable-canvas-fix
 Pillow>=10.2
 
