@@ -1,0 +1,635 @@
+import streamlit as st
+import SimpleITK as sitk
+import numpy as np
+import cv2
+import zipfile
+import os
+import tempfile
+import json
+import io
+import base64
+import requests
+from streamlit_drawable_canvas import st_canvas
+from PIL import Image
+
+st.set_page_config(layout="wide", page_title="Annotator And Feedback")
+backend_url = st.secrets["BACKEND_URL"]
+
+st.markdown(
+    """
+    <style>
+    /* Ensure buttons and icons have proper visibility */
+    html[data-theme="light"] div[data-testid="stCanvasToolbar"] button,
+    html[data-theme="dark"] div[data-testid="stCanvasToolbar"] button {
+        visibility: visible !important;
+        display: inline-block !important;
+    }
+
+    /* Styling icons within the buttons */
+    html[data-theme="light"] div[data-testid="stCanvasToolbar"] button svg,
+    html[data-theme="dark"] div[data-testid="stCanvasToolbar"] button svg {
+        fill: #000000 !important;  /* Light mode icon color */
+        stroke: #000000 !important; /* Light mode icon stroke */
+    }
+
+    /* Adjust for dark mode icons */
+    html[data-theme="dark"] div[data-testid="stCanvasToolbar"] button svg {
+        fill: #ffffff !important;  /* Dark mode icon color */
+        stroke: #ffffff !important; /* Dark mode icon stroke */
+    }
+
+    /* Canvas background for light and dark modes */
+    html[data-theme="light"] .st-drawable-canvas {
+        background-color: #f8f9fb !important;
+    }
+    html[data-theme="dark"] .st-drawable-canvas {
+        background-color: #1c1f26 !important;
+    }
+
+    /* Ensuring buttons are visible in both modes */
+    .st-drawable-canvas button {
+        visibility: visible !important;
+        display: inline-block !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+
+# Custom CSS for UI layout and styling
+st.markdown("""
+    <style>
+    .stSlider { padding-bottom: 20px; }
+    .block-container { padding-top: 2rem; }
+    .stButton button { width: 100%; }
+    /* Centering the canvas container */
+    div[data-testid="stCanvas"] {
+        margin: 0 auto;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+
+class NamedBytesIO(io.BytesIO):
+    """BytesIO wrapper that keeps the original filename for downstream UI."""
+
+    def __init__(self, buffer: bytes, name: str):
+        super().__init__(buffer)
+        self._name = name
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+
+@st.cache_data(show_spinner=False)
+def fetch_upload_detail(api_base: str, upload_id: str):
+    resp = requests.get(f"{api_base}/api/uploads/{upload_id}/", timeout=120)
+    resp.raise_for_status()
+    return resp.json()
+
+
+@st.cache_data(show_spinner=False)
+def fetch_upload_archive(api_base: str, upload_id: str, kind: str) -> bytes:
+    print("Downloading the zip file from the drive...")
+    resp = requests.get(
+        f"{api_base}/api/uploads/{upload_id}/download/",
+        params={"kind": kind},
+        timeout=600,
+    )
+    resp.raise_for_status()
+    return resp.content
+
+# --- Core Medical Image Functions ---
+
+def load_dicom_series(zip_file):
+    """Extracts ZIP and loads DICOM series using SimpleITK."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        with zipfile.ZipFile(zip_file, 'r') as zip_ref:
+            zip_ref.extractall(temp_dir)
+        
+        reader = sitk.ImageSeriesReader()
+        dicom_names = reader.GetGDCMSeriesFileNames(temp_dir)
+        if not dicom_names:
+            dicom_files = []
+            for root, dirs, files in os.walk(temp_dir):
+                for file in files:
+                    if file.lower().endswith(('.dcm', '.dicom')):
+                        dicom_files.append(os.path.join(root, file))
+            if dicom_files:
+                dicom_files.sort()
+                reader.SetFileNames(dicom_files)
+                try:
+                    image = reader.Execute()
+                    return sitk.GetArrayFromImage(image), image.GetSpacing(), image
+                except Exception:
+                    return None, None, None
+            return None, None, None
+        
+        reader.SetFileNames(dicom_names)
+        image = reader.Execute()
+        return sitk.GetArrayFromImage(image), image.GetSpacing(), image
+
+def load_nifti(nifti_file):
+    """Loads NIfTI label file and handles 4D one-hot encoding."""
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".nii.gz") as tmp:
+        tmp.write(nifti_file.getvalue())
+        tmp_path = tmp.name
+    
+    image = sitk.ReadImage(tmp_path)
+    arr = sitk.GetArrayFromImage(image)
+    
+    if len(arr.shape) == 4:
+        arr = np.argmax(arr, axis=0 if arr.shape[0] < arr.shape[-1] else -1).astype(np.uint8)
+        image_3d = sitk.GetImageFromArray(arr)
+        image_3d.SetSpacing(image.GetSpacing()[:3])
+        image = image_3d
+    
+    os.remove(tmp_path)
+    return image
+
+
+def load_nifti_bytes(data: bytes):
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".nii.gz") as tmp:
+        tmp.write(data)
+        tmp_path = tmp.name
+    try:
+        return sitk.ReadImage(tmp_path)
+    finally:
+        os.remove(tmp_path)
+
+
+def get_color_mapping(unique_values):
+    """Generates the cardiac color scheme based on mask values."""
+    color_map = {}
+    label_names = {}
+    unique_values = [v for v in unique_values if v != 0]
+    if len(unique_values) > 1:
+        mapping = {
+        1: ([255, 0, 0], "Left Ventricle (LV)"),
+        2: ([200, 50, 50], "Right Ventricle (RV)"),
+        3: ([0, 100, 255], "Left Atrium (LA)"),
+        4: ([0, 0, 255], "Right Atrium (RA)"),
+        5: ([0, 255, 0], "Aorta (AO)"),
+        6: ([255, 255, 0], "Pulmonary Artery (PA)")
+    }
+    else:
+        mapping = {
+            1: ([255, 0, 0], "Heart")
+        }
+    for val in unique_values:
+        val_int = int(val)
+        rgb, name = mapping.get(val_int, ([0, 255, 0], f"Class {val_int}"))
+        color_map[val_int] = np.array(rgb, dtype=np.uint8)
+        label_names[val_int] = name
+    return color_map, label_names
+
+def resample_mask_to_dicom(mask_image, dicom_image):
+    """Matches NIfTI mask dimensions to DICOM volume."""
+    resampler = sitk.ResampleImageFilter()
+    resampler.SetOutputSpacing(dicom_image.GetSpacing())
+    resampler.SetSize(dicom_image.GetSize())
+    resampler.SetOutputDirection(dicom_image.GetDirection())
+    resampler.SetOutputOrigin(dicom_image.GetOrigin())
+    resampler.SetInterpolator(sitk.sitkNearestNeighbor)
+    return sitk.GetArrayFromImage(resampler.Execute(mask_image))
+
+def process_slice(slice_data, label_slice, level, width, aspect_ratio=1.0, color_map=None):
+    """Prepares the RGB slice with windowing and mask overlays."""
+    lower, upper = level - width // 2, level + width // 2
+    img = np.clip(slice_data, lower, upper)
+    img = ((img - lower) / (upper - lower) * 255).astype(np.uint8)
+    
+    if aspect_ratio != 1.0:
+        new_dim = (int(img.shape[1]), int(img.shape[0] * aspect_ratio))
+        img = cv2.resize(img, new_dim, interpolation=cv2.INTER_LINEAR)
+        if label_slice is not None:
+            label_slice = cv2.resize(label_slice.astype(np.uint8), new_dim, interpolation=cv2.INTER_NEAREST)
+
+    img_rgb = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+    if label_slice is not None and label_slice.any() and color_map:
+        mask_overlay = np.zeros_like(img_rgb)
+        for val, color in color_map.items():
+            mask_overlay[label_slice == val] = color
+        mask_indices = label_slice > 0
+        blended = (img_rgb.astype(np.float32) * 0.5 + mask_overlay.astype(np.float32) * 0.5).astype(np.uint8)
+        img_rgb = np.where(mask_indices[..., np.newaxis], blended, img_rgb)
+    
+    return img_rgb
+
+
+def ensure_volume_loaded(zip_file, source_key: str) -> bool:
+    """Load DICOM volume into session state if the source has changed."""
+    if not zip_file or not source_key:
+        return False
+    if st.session_state.get("dicom_source_key") == source_key:
+        return True
+
+    try:
+        zip_file.seek(0)
+    except Exception:
+        pass
+
+    with st.spinner("Loading DICOM volume..."):
+        vol, spacing, dicom_image = load_dicom_series(zip_file)
+    if vol is None or spacing is None or dicom_image is None:
+        st.error("Failed to parse the provided DICOM ZIP.")
+        return False
+
+    st.session_state.update(
+        {
+            "vol": vol,
+            "spacing": spacing,
+            "dicom_image": dicom_image,
+            "dicom_source_key": source_key,
+            "dicom_filename": getattr(zip_file, "name", "dicom.zip"),
+            "masks": {},
+            "active_mask": "None",
+        }
+    )
+    return True
+
+
+def extract_masks_from_zip(zip_bytes: bytes, dicom_image):
+    if not zip_bytes or dicom_image is None:
+        return {}
+    extracted = {}
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
+        for info in archive.infolist():
+            name = info.filename
+            lower = name.lower()
+            if not lower.endswith((".nii", ".nii.gz")):
+                continue
+            if "shell" in lower:
+                continue
+            label = None
+            if "bp_seg" in lower or "bloodpool" in lower:
+                label = "Bloodpool"
+            elif "seg" in lower:
+                label = "Chambers and Vessels"
+            if not label:
+                continue
+            with archive.open(info) as handle:
+                mask_bytes = handle.read()
+            mask_img = load_nifti_bytes(mask_bytes)
+            extracted[label] = resample_mask_to_dicom(mask_img, dicom_image)
+    return extracted
+
+
+# --- Feedback Modal and Drawing Logic ---
+
+@st.dialog("Feedback Drawing Tool", width="large")
+def open_feedback_dialog(img_rgb, view_name, slice_num, original_filename, mask_name=None, upload_id: str | None = None):
+    mask_info = f" (Mask: **{mask_name}**)" if mask_name and mask_name != "None" else " (No Mask)"
+    st.write(f"Annotating **{view_name}** - Slice **{slice_num}**{mask_info}")
+    
+    # Convert numpy array to PIL Image
+    bg_pil = Image.fromarray(img_rgb)
+    
+    # Convert image to base64 for HTML embedding
+    buffered = io.BytesIO()
+    bg_pil.save(buffered, format="PNG")
+    img_base64 = base64.b64encode(buffered.getvalue()).decode()
+    
+    canvas_height = img_rgb.shape[0]
+    canvas_width = img_rgb.shape[1]
+    
+    col_ctrl, col_canvas, col_feedback = st.columns([1, 3, 1.5])
+    
+    with col_ctrl:
+        stroke_color = st.color_picker("Pick Color", "#FFFF00")
+        stroke_width = st.slider("Stroke Width", 1, 10, 3)
+        tool = st.selectbox("Tool", ("freedraw", "line", "rect", "circle"))
+
+    with col_canvas:
+        canvas_id = f"canvas_{view_name}_{slice_num}"
+
+        canvas_result = st_canvas(
+            fill_color="rgba(255, 255, 255, 0)",
+            stroke_width=stroke_width,
+            stroke_color=stroke_color,
+            background_color="#00000000",
+            background_image=bg_pil,
+            height=canvas_height,
+            width=canvas_width,
+            drawing_mode=tool,
+            key=canvas_id,
+            display_toolbar=True,
+            update_streamlit=True,
+        )
+
+    with col_feedback:
+        st.subheader("📝 Text Feedback")
+        annotator_name = st.text_input(
+            "Your name *",
+            key=f"annotator_name_{view_name}_{slice_num}",
+        )
+        text_feedback = st.text_area(
+            "Comments",
+            placeholder="Enter your feedback here...",
+            height=250,
+            label_visibility="collapsed",
+        )
+
+    # Centered submit button
+    st.divider()
+    col_left, col_btn, col_right = st.columns([2, 1, 2])
+    with col_btn:
+        submit_clicked = st.button("🚀 Submit Feedback", width='stretch')
+    
+    if submit_clicked:
+        if not annotator_name.strip():
+            st.error("Name is required to submit feedback.")
+            return
+        if canvas_result.image_data is None:
+            st.warning("No drawing data available.")
+            return
+
+        canvas_data = canvas_result.image_data.astype(np.uint8)
+        black_mask = (canvas_data[:, :, 0] < 10) & (canvas_data[:, :, 1] < 10) & (canvas_data[:, :, 2] < 10)
+        canvas_data[black_mask, 3] = 0
+
+        drawing_layer = Image.fromarray(canvas_data, "RGBA")
+        bg_rgba = bg_pil.convert("RGBA")
+        drawing_layer = drawing_layer.resize(bg_rgba.size)
+        final_img = Image.alpha_composite(bg_rgba, drawing_layer).convert("RGB")
+
+        buf = io.BytesIO()
+        final_img.save(buf, format="PNG")
+        final_img_base64 = base64.b64encode(buf.getvalue()).decode()
+
+        sample_name = os.path.splitext(original_filename)[0]
+        mask_suffix = f"_{os.path.splitext(mask_name)[0]}" if mask_name and mask_name != "None" else "_nomask"
+        fname = f"feedback_{sample_name}{mask_suffix}_{view_name}_{slice_num}.png"
+
+        feedback_payload = {
+            "sample_name": sample_name,
+            "mask_name": mask_name if mask_name and mask_name != "None" else None,
+            "view": view_name,
+            "slice_number": slice_num,
+            "filename": fname,
+            "text_feedback": text_feedback if text_feedback else None,
+            "image_base64": final_img_base64,
+        }
+
+        files = [
+            (
+                "attachments",
+                (fname, buf.getvalue(), "image/png"),
+            )
+        ]
+        payload = {
+            "author_name": annotator_name.strip(),
+            "author_email": st.session_state.get("annotator_email", ""),
+            "text": text_feedback or "",
+        }
+
+        if not upload_id:
+            st.error("Upload ID missing; cannot submit feedback to backend.")
+        else:
+            with st.spinner("Submitting feedback to dashboard..."):
+                try:
+                    resp = requests.post(
+                        f"{backend_url}/api/uploads/{upload_id}/feedback/",
+                        data=payload,
+                        files=files,
+                        timeout=300,
+                    )
+                except requests.RequestException as exc:
+                    st.error(f"Failed to submit feedback: {exc}")
+                else:
+                    if resp.status_code in (200, 201):
+                        st.success("✅ Feedback submitted to dashboard.")
+                    else:
+                        detail_msg = ""
+                        try:
+                            detail_msg = resp.json().get("detail", "")
+                        except Exception:
+                            detail_msg = resp.text
+                        st.error(f"Failed to submit feedback: {detail_msg or resp.status_code}")
+
+        st.download_button(
+            label="💾 Download Image",
+            data=buf.getvalue(),
+            file_name=fname,
+            mime="image/png",
+        )
+
+# --- Main Application Logic ---
+
+st.title("Annotate and Feedback")
+
+params = st.query_params
+upload_id_param = params.get("id")
+if isinstance(upload_id_param, list):
+    upload_id_param = upload_id_param[0] if upload_id_param else None
+if upload_id_param:
+    st.session_state["annotate_upload_id"] = str(upload_id_param).strip()
+
+active_upload_id = st.session_state.get("annotate_upload_id", "").strip()
+st.session_state.setdefault("annotator_name", "")
+st.session_state.setdefault("annotator_email", "")
+
+if not active_upload_id:
+    st.error("Upload ID missing. Please open this page from the dashboard.")
+    st.stop()
+
+st.sidebar.title("Navigation")
+st.sidebar.page_link("app.py", label="Home", icon="🏠")
+st.sidebar.page_link("pages/Dashboard.py", label="Dashboard", icon="🗂️")
+
+st.sidebar.header("Image Controls")
+level = st.sidebar.slider("Window Level", -1000, 1000, 40)
+width = st.sidebar.slider("Window Width", 1, 2000, 400)
+
+status_placeholder = st.empty()
+drive_detail = None
+drive_zip = None
+results_zip_bytes = None
+
+if active_upload_id:
+    try:
+        with st.spinner("Fetching study from Drive..."):
+            drive_detail = fetch_upload_detail(backend_url, active_upload_id)
+            download_kind = "input"
+            filename = (
+                drive_detail.get("input_filename")
+                or drive_detail.get("original_filename")
+                or f"{active_upload_id}.zip"
+            )
+            if not drive_detail.get("drive_input_file_id"):
+                if drive_detail.get("drive_combined_file_id"):
+                    download_kind = "combined"
+                    filename = drive_detail.get("combined_filename") or filename
+                elif drive_detail.get("drive_output_file_id"):
+                    download_kind = "output"
+                    filename = drive_detail.get("output_filename") or filename
+                else:
+                    raise ValueError("This upload does not have any downloadable archives yet.")
+            archive_cache: dict[str, bytes] = {}
+            zip_bytes = fetch_upload_archive(backend_url, active_upload_id, download_kind)
+            archive_cache[download_kind] = zip_bytes
+            drive_zip = NamedBytesIO(zip_bytes, filename)
+
+            mask_kind = None
+            if drive_detail.get("drive_combined_file_id"):
+                mask_kind = "combined"
+            elif drive_detail.get("drive_output_file_id"):
+                mask_kind = "output"
+
+            if mask_kind:
+                if mask_kind == download_kind:
+                    results_zip_bytes = zip_bytes
+                else:
+                    results_zip_bytes = fetch_upload_archive(backend_url, active_upload_id, mask_kind)
+        status_placeholder.success(f"Loaded {filename} from Drive.")
+    except requests.HTTPError as exc:
+        detail_msg = exc.response.text if exc.response is not None else str(exc)
+        status_placeholder.error(f"Failed to load upload {active_upload_id}: {detail_msg}")
+        for key in ["vol", "spacing", "dicom_image", "dicom_source_key", "dicom_filename"]:
+            st.session_state.pop(key, None)
+    except requests.RequestException as exc:
+        status_placeholder.error(f"Failed to load upload {active_upload_id}: {exc}")
+        for key in ["vol", "spacing", "dicom_image", "dicom_source_key", "dicom_filename"]:
+            st.session_state.pop(key, None)
+    except ValueError as exc:
+        status_placeholder.error(str(exc))
+        drive_zip = None
+        for key in ["vol", "spacing", "dicom_image", "dicom_source_key", "dicom_filename"]:
+            st.session_state.pop(key, None)
+
+dicom_zip = drive_zip
+dicom_source_key = None
+if drive_zip and active_upload_id:
+    dicom_source_key = f"drive:{active_upload_id}:{download_kind}"
+
+volume_ready = False
+if dicom_zip and dicom_source_key:
+    volume_ready = ensure_volume_loaded(dicom_zip, dicom_source_key)
+elif st.session_state.get("vol") is not None:
+    volume_ready = True
+
+dicom_filename = st.session_state.get(
+    "dicom_filename",
+    getattr(dicom_zip, "name", "dicom.zip") if dicom_zip else "dicom.zip",
+)
+
+if volume_ready:
+    vol = st.session_state["vol"]
+    spacing = st.session_state["spacing"]
+    dicom_image = st.session_state["dicom_image"]
+
+    masks = st.session_state.setdefault("masks", {})
+    active_mask_name = st.session_state.get("active_mask", "None")
+
+    dicom_key = st.session_state.get("dicom_source_key")
+    auto_key = st.session_state.get("auto_mask_source")
+    if results_zip_bytes and dicom_key and dicom_key != auto_key:
+        auto_masks = extract_masks_from_zip(results_zip_bytes, dicom_image)
+        if auto_masks:
+            masks.update(auto_masks)
+            st.session_state["auto_mask_source"] = dicom_key
+            if st.session_state.get("active_mask", "None") == "None":
+                st.session_state["active_mask"] = next(iter(auto_masks.keys()))
+
+    mask = masks.get(active_mask_name) if active_mask_name != "None" else None
+    show_mask = mask is not None and active_mask_name != "None"
+    color_map = None
+    if show_mask and mask is not None:
+        color_map, _ = get_color_mapping(np.unique(mask))
+
+    if masks:
+        st.divider()
+        st.header("Mask Selection")
+        mask_options = ["None"] + list(masks.keys())
+        selected_mask = st.radio(
+            "Select Active Mask",
+            options=mask_options,
+            index=mask_options.index(st.session_state.get("active_mask", "None"))
+            if st.session_state.get("active_mask", "None") in mask_options
+            else 0,
+            help="Only one mask can be active at a time",
+        )
+        st.session_state["active_mask"] = selected_mask
+        active_mask_name = selected_mask
+        show_mask = active_mask_name != "None"
+        mask = masks.get(active_mask_name) if show_mask else None
+        if show_mask and mask is not None:
+            color_map, _ = get_color_mapping(np.unique(mask))
+        else:
+            color_map = None
+
+    if active_mask_name != "None":
+        st.info(f"🎭 Active Mask: **{active_mask_name}**")
+
+    
+
+    col_ax, col_cor, col_sag = st.columns(3)
+    asp_coronal = spacing[2] / spacing[0]
+    asp_sagittal = spacing[2] / spacing[1]
+
+    with col_ax:
+        st.subheader("Axial")
+        z_idx = st.slider("Z Slice", 0, vol.shape[0] - 1, vol.shape[0] // 2)
+        mask_slice = mask[z_idx, :, :] if mask is not None and show_mask else None
+        img_z = process_slice(vol[z_idx, :, :], mask_slice, level, width, 1.0, color_map)
+        st.image(img_z, width='stretch')
+        if st.button("✎ Annotate Axial", key="btn_z"):
+            open_feedback_dialog(img_z, "Axial", z_idx, dicom_filename, active_mask_name, upload_id=active_upload_id or None)
+
+    with col_cor:
+        st.subheader("Coronal")
+        y_idx = st.slider("Y Slice", 0, vol.shape[1] - 1, vol.shape[1] // 2)
+        slice_img = np.flipud(vol[:, y_idx, :])
+        mask_slice = np.flipud(mask[:, y_idx, :]) if mask is not None and show_mask else None
+        img_y = process_slice(slice_img, mask_slice, level, width, asp_coronal, color_map)
+        st.image(img_y, width='stretch')
+        if st.button("✎ Annotate Coronal", key="btn_y"):
+            open_feedback_dialog(img_y, "Coronal", y_idx, dicom_filename, active_mask_name, upload_id=active_upload_id or None)
+
+    with col_sag:
+        st.subheader("Sagittal")
+        x_idx = st.slider("X Slice", 0, vol.shape[2] - 1, vol.shape[2] // 2)
+        slice_img = np.flipud(vol[:, :, x_idx])
+        mask_slice = np.flipud(mask[:, :, x_idx]) if mask is not None and show_mask else None
+        img_x = process_slice(slice_img, mask_slice, level, width, asp_sagittal, color_map)
+        st.image(img_x, width='stretch')
+        if st.button("✎ Annotate Sagittal", key="btn_x"):
+            open_feedback_dialog(img_x, "Sagittal", x_idx, dicom_filename, active_mask_name, upload_id=active_upload_id or None)
+
+
+    if color_map is not None and mask is not None:
+        _, label_names = get_color_mapping(np.unique(mask))
+        st.divider()
+        st.subheader("📋 Label Color Map")
+        legend_box_html = """
+        <div style='
+            border-radius: 10px;
+            padding: 15px 28px 15px 24px;
+            box-shadow: 0 1.5px 10px rgba(0,0,0,0.07);
+            margin-bottom: 22px;
+            max-width: 370px;
+            border: 1.7px solid #d4dde7;
+            display: inline-block;
+        '>
+        """
+        for class_val in sorted(color_map.keys()):
+            color = color_map[class_val]
+            label = label_names.get(class_val, f"Class {class_val}")
+            color_hex = f"#{color[0]:02x}{color[1]:02x}{color[2]:02x}"
+            legend_box_html += (
+                f"<div style='display: flex; align-items: center; gap: 11px; margin-bottom: 8px;'>"
+                f"<div style='width:22px; height:22px; background:{color_hex};'></div>"
+                f"<span style='font-size:15px;'><strong>{class_val}</strong>: {label}</span>"
+                f"</div>"
+            )
+        legend_box_html += "</div>"
+        st.markdown(legend_box_html, unsafe_allow_html=True)
+        st.divider()
+else:
+    if active_upload_id:
+        st.warning("Unable to load this upload from Drive. Check the ID or try again.")
+    else:
+        st.info("Provide an upload ID or upload a DICOM ZIP to begin.")

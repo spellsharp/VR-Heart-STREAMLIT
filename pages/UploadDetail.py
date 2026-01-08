@@ -12,6 +12,23 @@ st.title("📄 Upload Detail")
 # backend_url = st.secrets["BACKEND_URL"]
 backend_url = st.secrets["BACKEND_URL"]
 
+st.markdown(
+    """
+    <style>
+    button[kind="primary"] {
+        background-color: #d32f2f !important;
+        border-color: #d32f2f !important;
+        color: #ffffff !important;
+    }
+    button[kind="primary"]:hover {
+        background-color: #b71c1c !important;
+        border-color: #b71c1c !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 
 def build_drive_link(file_id: str | None) -> str | None:
     if not file_id:
@@ -68,6 +85,17 @@ def fetch_feedback(api_base: str, uid: str):
     resp.raise_for_status()
     return resp.json()
 
+
+def delete_feedback_record(api_base: str, upload_id: str, feedback_id: int, delete_drive: bool = True):
+    params = {"delete_drive": "true"} if delete_drive else {}
+    resp = requests.delete(
+        f"{api_base}/api/uploads/{upload_id}/feedback/{feedback_id}/",
+        params=params or None,
+        timeout=120,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
 try:
     detail = fetch_detail(backend_url, upload_id)
 except Exception as e:
@@ -80,10 +108,11 @@ st.markdown(f"**Original filename:** {detail.get('original_filename')}")
 ds = detail.get("duration_seconds")
 st.markdown(f"**Duration:** {ds:.1f}s" if ds is not None else "**Duration:** —")
 
-st.subheader("Download Result")
+# st.subheader("Download Result")
 result_kind = "combined" if detail.get("drive_combined_file_id") else None
 if not result_kind and detail.get("drive_output_file_id"):
     result_kind = "output"
+
 
 if result_kind:
     file_id = detail.get("drive_combined_file_id") or detail.get("drive_output_file_id")
@@ -94,6 +123,11 @@ if result_kind:
         st.info("Result archive link unavailable.")
 else:
     st.info("Result archive not available yet.")
+
+# st.divider()
+# st.subheader("Annotate")
+annotate_url = f"/AnnotationFeedback?id={upload_id}"
+st.link_button("Annotate", url=annotate_url, icon="🖌️")
 
 st.divider()
 st.subheader("Feedback")
@@ -118,7 +152,7 @@ try:
                                 url=download_url,
                             )
                         else:
-                            st.image(image_bytes, caption=filename, use_container_width=True)
+                            st.image(image_bytes, caption=filename, width='stretch')
                             st.caption(f"[Download original]({download_url})")
                     else:
                         st.link_button(
@@ -127,6 +161,43 @@ try:
                         )
                 else:
                     st.caption(f"{filename} unavailable for download.")
+            feedback_id = fb.get("id")
+            if feedback_id:
+                delete_key = f"pending_feedback_delete_{feedback_id}"
+                if st.session_state.get(delete_key):
+                    st.warning("This will remove the feedback and any Drive attachments permanently.")
+                    confirm_cols = st.columns(2)
+                    if confirm_cols[0].button(
+                        "Yes, delete feedback",
+                        key=f"confirm_feedback_delete_{feedback_id}",
+                        type="primary",
+                    ):
+                        st.session_state.pop(delete_key, None)
+                        with st.spinner("Deleting feedback..."):
+                            try:
+                                delete_feedback_record(backend_url, upload_id, feedback_id, delete_drive=True)
+                            except requests.HTTPError as exc:
+                                detail = exc.response.text if exc.response is not None else str(exc)
+                                st.error(f"Failed to delete feedback: {detail}")
+                            except requests.RequestException as exc:
+                                st.error(f"Failed to delete feedback: {exc}")
+                            else:
+                                st.success("Feedback removed.")
+                                st.rerun()
+                    if confirm_cols[1].button(
+                        "Cancel",
+                        key=f"cancel_feedback_delete_{feedback_id}",
+                    ):
+                        st.session_state.pop(delete_key, None)
+                        st.rerun()
+                else:
+                    if st.button(
+                        "Delete feedback",
+                        key=f"delete_feedback_{feedback_id}",
+                        type="primary",
+                    ):
+                        st.session_state[delete_key] = True
+                        st.rerun()
     if len(items) == 0:
         st.markdown("No feedback has been submitted yet.")
 except Exception:
