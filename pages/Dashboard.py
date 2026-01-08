@@ -3,32 +3,46 @@ import requests
 from datetime import datetime
 from urllib.parse import urlencode
 
+# --- Page Configuration ---
 st.set_page_config(page_title="VR-Heart Dashboard", layout="wide")
 
+# --- Custom Styling for Colors ---
+# Streamlit doesn't support direct 'color' arguments for buttons yet, 
+# so we use Column layout and Icons to differentiate actions.
+st.markdown("""
+    <style>
+    /* Add subtle padding to the container */
+    [data-testid="stVerticalBlockBorderControl"] {
+        padding: 1rem;
+    }
+    /* Status Colors */
+    .status-completed { color: #28a745; font-weight: bold; }
+    .status-pending { color: #fd7e14; font-weight: bold; }
+    </style>
+    """, unsafe_allow_html=True)
+
+# --- Navigation ---
 st.sidebar.title("Navigation")
 st.sidebar.page_link("app.py", label="Home", icon="🏠")
 st.sidebar.page_link("pages/Dashboard.py", label="Dashboard", icon="🗂️")
-st.title("🗂️ Doctor Dashboard")
 
+st.title("🗂️ Doctor Dashboard")
+st.caption("Manage previous uploads, download segmentation results, and provide feedback.")
+
+# --- Constants & Backend Logic ---
 backend_url = st.secrets["BACKEND_URL"]
 DETAIL_PAGE_ROUTE = "./UploadDetail"
-
+delete_drive_flag = True
 
 def build_drive_link(file_id: str | None) -> str | None:
     if not file_id:
         return None
     return f"https://drive.google.com/uc?export=download&id={file_id}"
 
-
 def build_detail_url(upload_id):
-    """Return a relative link to the UploadDetail page with the given ID."""
     if not upload_id:
         return None
     return f"{DETAIL_PAGE_ROUTE}?{urlencode({'id': str(upload_id)})}"
-
-st.caption("List of previous uploads and outputs.")
-
-delete_drive_flag = True
 
 @st.cache_data(ttl=30, show_spinner=False)
 def fetch_uploads(api_base: str):
@@ -40,7 +54,6 @@ def fetch_uploads(api_base: str):
         st.error(f"Failed to load uploads: {e}")
         return []
 
-
 def delete_upload_record(api_base: str, upload_id: str, delete_drive: bool = False):
     params = {"delete_drive": "true"} if delete_drive else {}
     resp = requests.delete(
@@ -51,73 +64,74 @@ def delete_upload_record(api_base: str, upload_id: str, delete_drive: bool = Fal
     resp.raise_for_status()
     return resp.json()
 
-with st.spinner("Loading uploads…"):
+# --- Main UI Logic ---
+with st.spinner("Fetching latest records..."):
     uploads = fetch_uploads(backend_url)
 
 if not uploads:
-    st.info("No uploads found yet.")
+    st.info("No records found in the database.")
 else:
+    # Header Row
+    h_cols = st.columns([3, 1.5, 1.5, 1.5, 1.5, 1.5, 1])
+
     for u in uploads:
+        upload_id = u.get("id")
         with st.container(border=True):
-            cols = st.columns([3, 2, 2, 2, 2, 2, 1])
-            cols[0].markdown(f"**{u.get('original_filename', '')}**")
-            # cols[1].markdown(f"Model: `{u.get('segmentation_model', '')}`")
-            d = u.get("duration_seconds")
-            cols[2].markdown(f"Time: {d:.1f}s" if d is not None else "Time: —")
+            cols = st.columns([3, 1.5, 1.5, 1.5, 1.5, 1.5, 1])
+            
+            cols[0].markdown(f"**{u.get('original_filename', 'Unknown')}**")
+            
             created = u.get("created_at")
             try:
-                cols[3].markdown(datetime.fromisoformat(created.replace("Z","+00:00")).strftime("%Y-%m-%d %H:%M"))
-            except Exception:
-                cols[3].markdown(str(created))
+                date_val = datetime.fromisoformat(created.replace("Z","+00:00")).strftime("%Y-%m-%d")
+                cols[1].text(date_val)
+            except:
+                cols[1].text("—")
+
+            d = u.get("duration_seconds")
+            cols[2].text(f"{d:.1f}s" if d is not None else "—")
+
             status = (u.get("status") or "").capitalize()
-            cols[4].markdown(f"Status: **{status or 'Unknown'}**")
+            if status == "Completed":
+                cols[3].markdown(f":green[{status}]")
+            else:
+                cols[3].markdown(f":orange[{status}]")
+
+            detail_url = build_detail_url(upload_id)
+            if detail_url and status == "Completed":
+                cols[4].link_button("Add Comments", url=detail_url, icon="💬", help="Provide clinical feedback", use_container_width=True)
+            else:
+                cols[4].empty()
+
             download_link = build_drive_link(u.get("drive_combined_file_id") or u.get("drive_output_file_id"))
             if download_link:
-                cols[5].link_button(
-                    "Download Results",
-                    url=download_link,
-                )
+                cols[5].link_button("Download Results", url=download_link, icon="📥", help="Download from Google Drive", use_container_width=True)
             else:
-                cols[5].markdown("Awaiting results")
-            upload_id = u.get("id")
-            
-            # Check if this upload is pending deletion confirmation
+                cols[5].caption("Processing...")
+
             pending_delete = st.session_state.get(f"pending_delete_{upload_id}", False)
-            
+            if not pending_delete:
+                if cols[6].button("Delete Entry", key=f"del_{upload_id}", type="primary", help="Delete this entry"):
+                    st.session_state[f"pending_delete_{upload_id}"] = True
+                    st.rerun()
+
+            # Confirmation UI
             if pending_delete:
-                # Show confirmation UI
-                st.warning("⚠️ **This action cannot be undone. Delete anyway?**")
-                confirm_cols = st.columns(2)
-                if confirm_cols[0].button("Yes, Delete", key=f"confirm_yes_{upload_id}", type="primary"):
-                    # Clear the pending state and proceed with deletion
+                st.warning(f"Are you sure you want to delete {u.get('original_filename')}?")
+                c1, c2 = st.columns([1, 1])
+                if c1.button("Confirm", key=f"yes_{upload_id}", type="primary", use_container_width=True):
                     del st.session_state[f"pending_delete_{upload_id}"]
-                    with st.spinner("Deleting upload..."):
+                    with st.spinner("Deleting..."):
                         try:
                             delete_upload_record(backend_url, upload_id, delete_drive_flag)
-                        except requests.HTTPError as exc:
-                            detail = exc.response.text if exc.response is not None else str(exc)
-                            st.error(f"Failed to delete upload: {detail}")
-                        except requests.RequestException as exc:
-                            st.error(f"Failed to delete upload: {exc}")
-                        else:
-                            st.success("Upload removed.")
                             fetch_uploads.clear()
                             st.rerun()
-                if confirm_cols[1].button("Cancel", key=f"confirm_no_{upload_id}"):
-                    # Clear the pending state
+                        except Exception as e:
+                            st.error(f"Error: {e}")
+                if c2.button("Cancel", key=f"no_{upload_id}", use_container_width=True):
                     del st.session_state[f"pending_delete_{upload_id}"]
                     st.rerun()
-            elif cols[6].button(
-                "🗑️",
-                key=f"dash_delete_{upload_id}",
-                help="Delete this upload",
-                disabled=not bool(upload_id),
-            ):
-                # Store the upload ID in session state to show confirmation
-                st.session_state[f"pending_delete_{upload_id}"] = True
-                st.rerun()
-            detail_url = build_detail_url(u.get("id"))
-            if detail_url and status == "Completed":
-                st.link_button("Open ▶️", url=detail_url, icon="🔍")
 
-
+# --- Footer ---
+st.markdown("---")
+st.caption("VR-Heart System v2.1 | Data refreshed every 30 seconds.")

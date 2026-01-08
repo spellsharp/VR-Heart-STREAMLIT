@@ -58,22 +58,12 @@ st.markdown('<div class="subtext">Upload DICOMs ZIP → Inference → Get Result
 # --- File Upload ---
 uploaded_file = st.file_uploader("📁 Upload your DICOM ZIP file", type=["zip"])
 
-# # --- Doctor Info (for dashboard records) ---
-# st.markdown("### 👩‍⚕️ Doctor Information (for dashboard record)")
-# doctor_name = st.text_input("Doctor Name", value="", help="Used to attribute the upload record")
-# doctor_email = st.text_input("Doctor Email (optional)", value="")
 
 doctor_name = ""
 doctor_email = ""
 
-# --- Model Selection ---
-st.markdown("### 🧠 Model Selection")
 
-disable_segmentation = st.checkbox(
-    "Bloodpool only",
-    value=False,
-    help="Produces only bloodpool segmentation. Use for faster bloodpool output."
-)
+disable_segmentation = False
 # --- Stopwatch Placeholder ---
 stopwatch_placeholder = st.empty()
 
@@ -167,12 +157,17 @@ if uploaded_file and st.button("🚀 Run Inference"):
                     default_filename = f"{safe_base}_results.zip"
                     download_filename = drive_combined_name or drive_output_name or default_filename
 
-                    st.download_button(
-                        label="📦 Download Results ZIP",
-                        data=BytesIO(response.content),
-                        file_name=download_filename or default_filename,
-                        mime="application/zip",
-                    )
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.download_button(
+                            label="📦 Download Results ZIP",
+                            data=BytesIO(response.content),
+                            file_name=download_filename or default_filename,
+                            mime="application/zip",
+                        )
+                    with col2:
+                        if upload_id:
+                            st.link_button("💬 Add Comments", f"/UploadDetail?id={upload_id}")
 
                     if upload_id and not server_finalized:
                         try:
