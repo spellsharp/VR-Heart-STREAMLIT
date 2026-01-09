@@ -76,7 +76,10 @@ def create_pending_upload():
             "original_filename": uploaded_file.name if uploaded_file else "",
             "disable_segmentation": str(disable_segmentation).lower(),
         }
-        resp = requests.post(f"{backend_url}/api/uploads/pending/", data=payload, timeout=300)
+        print(payload)
+        resp = requests.post(f"{backend_url}/api/uploads/pending/", data=payload, timeout=3600)
+        print(resp.status_code)
+        print(resp.text)
         if resp.status_code in (200, 201):
             data = resp.json()
             return data.get("id")
