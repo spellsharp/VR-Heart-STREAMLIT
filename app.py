@@ -76,7 +76,7 @@ def create_pending_upload():
             "original_filename": uploaded_file.name if uploaded_file else "",
             "disable_segmentation": str(disable_segmentation).lower(),
         }
-        resp = requests.post(f"{backend_url}/api/uploads/pending/", data=payload, timeout=30)
+        resp = requests.post(f"{backend_url}/api/uploads/pending/", data=payload, timeout=300)
         if resp.status_code in (200, 201):
             data = resp.json()
             return data.get("id")
@@ -125,7 +125,6 @@ if uploaded_file and st.button("🚀 Run Inference"):
                     "doctor_name": doctor_name,
                     "doctor_email": doctor_email,
                     "generate_stl": True,
-                    "include_dicom": False,
                     "run_segmentation": not disable_segmentation,
                 }
                 if upload_id:
