@@ -124,11 +124,6 @@ if result_kind:
 else:
     st.info("Result archive not available yet.")
 
-# st.divider()
-# st.subheader("Annotate")
-annotate_url = f"/AnnotationFeedback?id={upload_id}"
-st.link_button("Annotate", url=annotate_url, icon="🖌️")
-
 st.divider()
 st.subheader("Feedback")
 try:
