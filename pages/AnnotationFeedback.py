@@ -9,6 +9,7 @@ import json
 import io
 import base64
 import logging
+import gc
 import requests
 from streamlit_drawable_canvas import st_canvas
 from PIL import Image
@@ -279,12 +280,42 @@ def process_slice(slice_data, label_slice, level, width, aspect_ratio=1.0, color
     return img_rgb
 
 
+def clear_active_volume_state(reason: str | None = None) -> bool:
+    """Remove heavy DICOM artifacts from session state to release RAM."""
+    heavy_keys = [
+        "vol",
+        "spacing",
+        "dicom_image",
+        "dicom_source_key",
+        "dicom_filename",
+        "masks",
+        "active_mask",
+        "auto_mask_source",
+    ]
+    cleared = False
+    for key in heavy_keys:
+        if key in st.session_state:
+            st.session_state.pop(key, None)
+            cleared = True
+    if cleared:
+        msg = "Cleared cached DICOM volume data"
+        if reason:
+            msg = f"{msg} | reason={reason}"
+        logger.info(msg)
+        gc.collect()
+    return cleared
+
+
 def ensure_volume_loaded(zip_source, source_key: str, original_filename: str | None = None) -> bool:
     """Load DICOM volume into session state if the source has changed."""
     if not zip_source or not source_key:
         return False
-    if st.session_state.get("dicom_source_key") == source_key:
+    current_source = st.session_state.get("dicom_source_key")
+    if current_source == source_key:
         return True
+
+    reason = f"{current_source} -> {source_key}" if current_source else f"init {source_key}"
+    clear_active_volume_state(reason=reason)
 
     zip_target = zip_source
     try:
@@ -555,6 +586,12 @@ if upload_id_param:
 active_upload_id = st.session_state.get("annotate_upload_id", "").strip()
 st.session_state.setdefault("annotator_name", "")
 st.session_state.setdefault("annotator_email", "")
+previous_upload_id = st.session_state.get("_last_active_upload_id")
+if previous_upload_id and previous_upload_id != active_upload_id:
+    clear_active_volume_state(
+        reason=f"Annotator switched from {previous_upload_id} to {active_upload_id or 'None'}"
+    )
+st.session_state["_last_active_upload_id"] = active_upload_id
 
 if not active_upload_id:
     st.error("Upload ID missing. Please open this page from the dashboard.")
@@ -628,17 +665,14 @@ if active_upload_id:
     except requests.HTTPError as exc:
         detail_msg = exc.response.text if exc.response is not None else str(exc)
         status_placeholder.error(f"Failed to load upload {active_upload_id}: {detail_msg}")
-        for key in ["vol", "spacing", "dicom_image", "dicom_source_key", "dicom_filename"]:
-            st.session_state.pop(key, None)
+        clear_active_volume_state(reason="Drive fetch HTTP error")
     except requests.RequestException as exc:
         status_placeholder.error(f"Failed to load upload {active_upload_id}: {exc}")
-        for key in ["vol", "spacing", "dicom_image", "dicom_source_key", "dicom_filename"]:
-            st.session_state.pop(key, None)
+        clear_active_volume_state(reason="Drive fetch request exception")
     except ValueError as exc:
         status_placeholder.error(str(exc))
         drive_zip = None
-        for key in ["vol", "spacing", "dicom_image", "dicom_source_key", "dicom_filename"]:
-            st.session_state.pop(key, None)
+        clear_active_volume_state(reason="Drive fetch value error")
 
 dicom_zip = drive_zip_path
 dicom_source_key = None
