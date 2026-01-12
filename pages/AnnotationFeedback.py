@@ -10,9 +10,11 @@ import io
 import base64
 import logging
 import gc
+import threading
 import requests
 from streamlit_drawable_canvas import st_canvas
 from PIL import Image
+from typing import Any
 
 st.set_page_config(layout="wide", page_title="Annotator And Feedback")
 backend_url = st.secrets["BACKEND_URL"]
@@ -77,6 +79,104 @@ st.markdown("""
 
 
 MAX_ARCHIVE_CACHE_ITEMS = 2
+
+_GLOBAL_VOLUME_CACHE: dict[str, dict[str, Any]] = {}
+_GLOBAL_VOLUME_LOCK = threading.Lock()
+
+
+def _read_meminfo_kb() -> dict[str, int]:
+    info: dict[str, int] = {}
+    try:
+        with open("/proc/meminfo", "r", encoding="utf-8") as handle:
+            for line in handle:
+                if ":" not in line:
+                    continue
+                key, value = line.split(":", 1)
+                parts = value.strip().split()
+                if not parts:
+                    continue
+                num = int(parts[0])
+                info[key.strip()] = num
+    except (OSError, ValueError):
+        logger.warning("Unable to read /proc/meminfo for RAM stats.")
+    return info
+
+
+def _log_system_memory(prefix: str):
+    meminfo = _read_meminfo_kb()
+    total_mb = round(meminfo.get("MemTotal", 0) / 1024, 2)
+    available_mb = round(meminfo.get("MemAvailable", 0) / 1024, 2)
+    free_mb = round(meminfo.get("MemFree", 0) / 1024, 2)
+    logger.warning(
+        "%s | RAM total_mb=%s available_mb=%s free_mb=%s",
+        prefix,
+        total_mb,
+        available_mb,
+        free_mb,
+    )
+
+
+def _summarize_volume_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    summary: dict[str, Any] = {}
+    vol = payload.get("vol")
+    if isinstance(vol, np.ndarray):
+        summary["vol_shape"] = vol.shape
+        summary["vol_dtype"] = str(vol.dtype)
+    dicom_image = payload.get("dicom_image")
+    if dicom_image is not None:
+        summary["dicom_image"] = "SimpleITK.Image"
+    masks = payload.get("masks")
+    if isinstance(masks, dict):
+        summary["mask_keys"] = list(masks.keys())
+    spacing = payload.get("spacing")
+    if spacing is not None:
+        summary["spacing"] = spacing
+    return summary
+
+
+def store_global_volume(source_key: str, payload: dict[str, Any], reason: str | None = None):
+    with _GLOBAL_VOLUME_LOCK:
+        evicted = [key for key in list(_GLOBAL_VOLUME_CACHE.keys()) if key != source_key]
+        for key in evicted:
+            _GLOBAL_VOLUME_CACHE.pop(key, None)
+        _GLOBAL_VOLUME_CACHE[source_key] = payload
+    if evicted:
+        logger.warning(
+            "Evicted global volume(s) %s before caching %s | reason=%s",
+            evicted,
+            source_key,
+            reason or "unspecified",
+        )
+        _log_system_memory("After eviction")
+    logger.warning(
+        "Global volume cached | key=%s | summary=%s",
+        source_key,
+        _summarize_volume_payload(payload),
+    )
+    _log_system_memory("After store_global_volume")
+
+
+def get_global_volume(source_key: str) -> dict[str, Any] | None:
+    with _GLOBAL_VOLUME_LOCK:
+        payload = _GLOBAL_VOLUME_CACHE.get(source_key)
+    if payload is None:
+        logger.warning("Global volume miss | key=%s", source_key)
+    return payload
+
+
+def clear_global_volume(reason: str | None = None) -> list[str]:
+    with _GLOBAL_VOLUME_LOCK:
+        cleared_keys = list(_GLOBAL_VOLUME_CACHE.keys())
+        _GLOBAL_VOLUME_CACHE.clear()
+    if cleared_keys:
+        logger.warning(
+            "Cleared global volume cache | keys=%s | reason=%s",
+            cleared_keys,
+            reason or "unspecified",
+        )
+        gc.collect()
+        _log_system_memory("After clear_global_volume")
+    return cleared_keys
 
 
 def fetch_upload_detail(api_base: str, upload_id: str):
@@ -288,6 +388,7 @@ def clear_active_volume_state(reason: str | None = None) -> bool:
         reason or "unspecified",
         all_keys,
     )
+    _log_system_memory("Before clearing session state")
     base_keys = [
         "vol",
         "spacing",
@@ -312,18 +413,23 @@ def clear_active_volume_state(reason: str | None = None) -> bool:
             st.session_state.pop(key, None)
             removed_keys.append(key)
     if removed_keys:
-        msg = f"Cleared cached DICOM volume data | keys={removed_keys}"
-        if reason:
-            msg = f"{msg} | reason={reason}"
-        logger.warning(msg)
+        logger.warning(
+            "Cleared session-scoped DICOM keys | keys=%s | reason=%s",
+            removed_keys,
+            reason or "unspecified",
+        )
+    global_removed = clear_global_volume(reason=reason)
+    cleared = bool(removed_keys or global_removed)
+    if not cleared:
+        logger.warning(
+            "Clear requested but no cached DICOM volume data found | reason=%s",
+            reason or "unspecified",
+        )
+        return False
+    _log_system_memory("After clearing session/global state")
+    if removed_keys and not global_removed:
         gc.collect()
-        return True
-
-    msg = "Clear requested but no cached DICOM volume data found"
-    if reason:
-        msg = f"{msg} | reason={reason}"
-    logger.warning(msg)
-    return False
+    return True
 
 
 def ensure_volume_loaded(zip_source, source_key: str, original_filename: str | None = None) -> bool:
@@ -332,10 +438,16 @@ def ensure_volume_loaded(zip_source, source_key: str, original_filename: str | N
         return False
     current_source = st.session_state.get("dicom_source_key")
     if current_source == source_key:
-        return True
-
-    reason = f"{current_source} -> {source_key}" if current_source else f"init {source_key}"
-    clear_active_volume_state(reason=reason)
+        existing_payload = get_global_volume(source_key)
+        if existing_payload:
+            return True
+        logger.warning(
+            "Session references %s but global cache is empty; reloading volume.",
+            source_key,
+        )
+    else:
+        reason = f"{current_source} -> {source_key}" if current_source else f"init {source_key}"
+        clear_active_volume_state(reason=reason)
 
     zip_target = zip_source
     try:
@@ -357,33 +469,22 @@ def ensure_volume_loaded(zip_source, source_key: str, original_filename: str | N
         else:
             inferred_name = getattr(zip_target, "name", "dicom.zip")
 
+    payload = {
+        "vol": vol,
+        "spacing": spacing,
+        "dicom_image": dicom_image,
+        "masks": {},
+        "auto_mask_source": None,
+        "dicom_filename": inferred_name or "dicom.zip",
+    }
+    store_global_volume(source_key, payload, reason="fresh load")
+    _log_system_memory("After ensure_volume_loaded fresh cache")
     st.session_state.update(
         {
-            "vol": vol,
-            "spacing": spacing,
-            "dicom_image": dicom_image,
             "dicom_source_key": source_key,
             "dicom_filename": inferred_name or "dicom.zip",
-            "masks": {},
             "active_mask": "None",
         }
-    )
-    heavy_snapshot = {
-        key: {
-            "type": type(st.session_state[key]).__name__,
-            "extra": (
-                list(st.session_state[key].keys())
-                if isinstance(st.session_state[key], dict)
-                else getattr(st.session_state[key], "shape", None)
-            ),
-        }
-        for key in ("vol", "dicom_image", "masks")
-        if key in st.session_state
-    }
-    logger.warning(
-        "Volume cached in session state | source=%s | heavy_snapshot=%s",
-        source_key,
-        heavy_snapshot,
     )
     return True
 
@@ -717,31 +818,39 @@ if drive_zip_path and active_upload_id:
     dicom_source_key = f"drive:{active_upload_id}:{download_kind}"
 
 volume_ready = False
+volume_bundle: dict[str, Any] | None = None
 if dicom_zip and dicom_source_key:
     volume_ready = ensure_volume_loaded(dicom_zip, dicom_source_key, drive_filename)
-elif st.session_state.get("vol") is not None:
-    volume_ready = True
+    if volume_ready:
+        active_key = st.session_state.get("dicom_source_key")
+        if active_key:
+            volume_bundle = get_global_volume(active_key)
+else:
+    existing_key = st.session_state.get("dicom_source_key")
+    if existing_key:
+        volume_bundle = get_global_volume(existing_key)
+        volume_ready = volume_bundle is not None
 
 dicom_filename = st.session_state.get(
     "dicom_filename",
     drive_filename or (os.path.basename(dicom_zip) if isinstance(dicom_zip, (str, os.PathLike)) else "dicom.zip"),
 )
 
-if volume_ready:
-    vol = st.session_state["vol"]
-    spacing = st.session_state["spacing"]
-    dicom_image = st.session_state["dicom_image"]
+if volume_ready and volume_bundle:
+    vol = volume_bundle["vol"]
+    spacing = volume_bundle["spacing"]
+    dicom_image = volume_bundle["dicom_image"]
 
-    masks = st.session_state.setdefault("masks", {})
+    masks = volume_bundle.setdefault("masks", {})
     active_mask_name = st.session_state.get("active_mask", "None")
 
     dicom_key = st.session_state.get("dicom_source_key")
-    auto_key = st.session_state.get("auto_mask_source")
+    auto_key = volume_bundle.get("auto_mask_source")
     if results_zip_entry and dicom_key and dicom_key != auto_key:
         auto_masks = extract_masks_from_zip(results_zip_entry, dicom_image)
         if auto_masks:
             masks.update(auto_masks)
-            st.session_state["auto_mask_source"] = dicom_key
+            volume_bundle["auto_mask_source"] = dicom_key
             if st.session_state.get("active_mask", "None") == "None":
                 st.session_state["active_mask"] = next(iter(auto_masks.keys()))
 
@@ -839,6 +948,9 @@ if volume_ready:
         legend_box_html += "</div>"
         st.markdown(legend_box_html, unsafe_allow_html=True)
         st.divider()
+elif volume_ready and not volume_bundle:
+    st.error("Volume metadata loaded but cache entry missing. Please reload this page.")
+    st.stop()
 else:
     if active_upload_id:
         st.warning("Unable to load this upload from Drive. Check the ID or try again.")
