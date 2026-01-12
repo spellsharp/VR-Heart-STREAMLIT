@@ -282,7 +282,13 @@ def process_slice(slice_data, label_slice, level, width, aspect_ratio=1.0, color
 
 def clear_active_volume_state(reason: str | None = None) -> bool:
     """Remove heavy DICOM artifacts from session state to release RAM."""
-    heavy_keys = [
+    all_keys = list(st.session_state.keys())
+    logger.info(
+        "Clear request received | reason=%s | session_state_keys=%s",
+        reason or "unspecified",
+        all_keys,
+    )
+    base_keys = [
         "vol",
         "spacing",
         "dicom_image",
@@ -292,18 +298,32 @@ def clear_active_volume_state(reason: str | None = None) -> bool:
         "active_mask",
         "auto_mask_source",
     ]
-    cleared = False
+    dynamic_keys = [
+        key
+        for key in list(st.session_state.keys())
+        if key.startswith("canvas_")
+        or key.startswith("annotator_name_")
+        or key.startswith("annotator_email_")
+    ]
+    heavy_keys = list(dict.fromkeys(base_keys + dynamic_keys))
+    removed_keys: list[str] = []
     for key in heavy_keys:
         if key in st.session_state:
             st.session_state.pop(key, None)
-            cleared = True
-    if cleared:
-        msg = "Cleared cached DICOM volume data"
+            removed_keys.append(key)
+    if removed_keys:
+        msg = f"Cleared cached DICOM volume data | keys={removed_keys}"
         if reason:
             msg = f"{msg} | reason={reason}"
         logger.info(msg)
         gc.collect()
-    return cleared
+        return True
+
+    msg = "Clear requested but no cached DICOM volume data found"
+    if reason:
+        msg = f"{msg} | reason={reason}"
+    logger.info(msg)
+    return False
 
 
 def ensure_volume_loaded(zip_source, source_key: str, original_filename: str | None = None) -> bool:
