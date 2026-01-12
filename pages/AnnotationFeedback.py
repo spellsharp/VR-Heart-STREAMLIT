@@ -87,7 +87,7 @@ def fetch_upload_detail(api_base: str, upload_id: str):
 
 def fetch_upload_archive(api_base: str, upload_id: str, kind: str, filename_hint: str | None = None) -> dict:
     """Stream a Drive archive to a temp file to avoid keeping huge blobs in RAM."""
-    logger.info(
+    logger.warning(
         "Downloading archive | upload=%s | kind=%s | filename_hint=%s",
         upload_id,
         kind,
@@ -111,7 +111,7 @@ def fetch_upload_archive(api_base: str, upload_id: str, kind: str, filename_hint
                 tmp.write(chunk)
         temp_path = tmp.name
     size_bytes = os.path.getsize(temp_path)
-    logger.info(
+    logger.warning(
         "Archive downloaded | upload=%s | kind=%s | path=%s | size_mb=%.2f",
         upload_id,
         kind,
@@ -283,7 +283,7 @@ def process_slice(slice_data, label_slice, level, width, aspect_ratio=1.0, color
 def clear_active_volume_state(reason: str | None = None) -> bool:
     """Remove heavy DICOM artifacts from session state to release RAM."""
     all_keys = list(st.session_state.keys())
-    logger.info(
+    logger.warning(
         "Clear request received | reason=%s | session_state_keys=%s",
         reason or "unspecified",
         all_keys,
@@ -315,14 +315,14 @@ def clear_active_volume_state(reason: str | None = None) -> bool:
         msg = f"Cleared cached DICOM volume data | keys={removed_keys}"
         if reason:
             msg = f"{msg} | reason={reason}"
-        logger.info(msg)
+        logger.warning(msg)
         gc.collect()
         return True
 
     msg = "Clear requested but no cached DICOM volume data found"
     if reason:
         msg = f"{msg} | reason={reason}"
-    logger.info(msg)
+    logger.warning(msg)
     return False
 
 
@@ -433,7 +433,7 @@ def open_feedback_dialog(img_rgb, view_name, slice_num, original_filename, mask_
     
     # Convert numpy array to PIL Image
     bg_pil = Image.fromarray(img_rgb)
-    logger.info(
+    logger.warning(
         "bg_pil ready | mode=%s | size=%s | upload=%s | view=%s | slice=%s",
         bg_pil.mode,
         bg_pil.size,
@@ -449,7 +449,7 @@ def open_feedback_dialog(img_rgb, view_name, slice_num, original_filename, mask_
     
     canvas_height = img_rgb.shape[0]
     canvas_width = img_rgb.shape[1]
-    logger.info(
+    logger.warning(
         "Canvas dimensions | width=%s | height=%s | key=%s",
         canvas_width,
         canvas_height,
@@ -558,7 +558,7 @@ def open_feedback_dialog(img_rgb, view_name, slice_num, original_filename, mask_
         else:
             with st.spinner("Submitting feedback to dashboard..."):
                 try:
-                    logger.info(
+                    logger.warning(
                         "Submitting feedback | upload=%s | file=%s | payload_has_text=%s",
                         upload_id,
                         fname,
@@ -575,7 +575,7 @@ def open_feedback_dialog(img_rgb, view_name, slice_num, original_filename, mask_
                     st.error(f"Failed to submit feedback: {exc}")
                 else:
                     if resp.status_code in (200, 201):
-                        logger.info("Feedback submitted successfully | upload=%s | status=%s", upload_id, resp.status_code)
+                        logger.warning("Feedback submitted successfully | upload=%s | status=%s", upload_id, resp.status_code)
                         st.success("✅ Feedback submitted to dashboard.")
                     else:
                         detail_msg = ""
