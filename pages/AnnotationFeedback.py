@@ -368,6 +368,23 @@ def ensure_volume_loaded(zip_source, source_key: str, original_filename: str | N
             "active_mask": "None",
         }
     )
+    heavy_snapshot = {
+        key: {
+            "type": type(st.session_state[key]).__name__,
+            "extra": (
+                list(st.session_state[key].keys())
+                if isinstance(st.session_state[key], dict)
+                else getattr(st.session_state[key], "shape", None)
+            ),
+        }
+        for key in ("vol", "dicom_image", "masks")
+        if key in st.session_state
+    }
+    logger.warning(
+        "Volume cached in session state | source=%s | heavy_snapshot=%s",
+        source_key,
+        heavy_snapshot,
+    )
     return True
 
 
