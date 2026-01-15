@@ -12,68 +12,24 @@ import logging
 import gc
 import threading
 import requests
-from streamlit_drawable_canvas import st_canvas
+# Canvas import removed - using simple image viewer instead
+# from streamlit_drawable_canvas import st_canvas
 from PIL import Image
 from typing import Any
 
-st.set_page_config(layout="wide", page_title="Annotator And Feedback")
+st.set_page_config(layout="wide", page_title="Slice-wise Feedback")
 backend_url = st.secrets["BACKEND_URL"]
 logger = logging.getLogger("annotation_feedback")
 logger.setLevel(logging.INFO)
 
-st.markdown(
-    """
-    <style>
-    /* Ensure buttons and icons have proper visibility */
-    html[data-theme="light"] div[data-testid="stCanvasToolbar"] button,
-    html[data-theme="dark"] div[data-testid="stCanvasToolbar"] button {
-        visibility: visible !important;
-        display: inline-block !important;
-    }
+# Canvas-related CSS removed since we no longer use the drawable canvas
 
-    /* Styling icons within the buttons */
-    html[data-theme="light"] div[data-testid="stCanvasToolbar"] button svg,
-    html[data-theme="dark"] div[data-testid="stCanvasToolbar"] button svg {
-        fill: #000000 !important;  /* Light mode icon color */
-        stroke: #000000 !important; /* Light mode icon stroke */
-    }
-
-    /* Adjust for dark mode icons */
-    html[data-theme="dark"] div[data-testid="stCanvasToolbar"] button svg {
-        fill: #ffffff !important;  /* Dark mode icon color */
-        stroke: #ffffff !important; /* Dark mode icon stroke */
-    }
-
-    /* Canvas background for light and dark modes */
-    html[data-theme="light"] .st-drawable-canvas {
-        background-color: #f8f9fb !important;
-    }
-    html[data-theme="dark"] .st-drawable-canvas {
-        background-color: #1c1f26 !important;
-    }
-
-    /* Ensuring buttons are visible in both modes */
-    .st-drawable-canvas button {
-        visibility: visible !important;
-        display: inline-block !important;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-
-
-# Custom CSS for UI layout and styling
+# Custom CSS for UI layout and styling 
 st.markdown("""
     <style>
     .stSlider { padding-bottom: 20px; }
     .block-container { padding-top: 2rem; }
     .stButton button { width: 100%; }
-    /* Centering the canvas container */
-    div[data-testid="stCanvas"] {
-        margin: 0 auto;
-    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -528,9 +484,9 @@ def extract_masks_from_zip(zip_source, dicom_image):
     return extracted
 
 
-# --- Feedback Modal and Drawing Logic ---
+# --- Feedback Modal and Image Viewer ---
 
-@st.dialog("Feedback Drawing Tool", width="large")
+@st.dialog("Add Feedback", width="large")
 def open_feedback_dialog(img_rgb, view_name, slice_num, original_filename, mask_name=None, upload_id: str | None = None):
     array_details = "unavailable"
     if isinstance(img_rgb, np.ndarray):
@@ -547,12 +503,12 @@ def open_feedback_dialog(img_rgb, view_name, slice_num, original_filename, mask_
         array_details,
     )
     mask_info = f" (Mask: **{mask_name}**)" if mask_name and mask_name != "None" else " (No Mask)"
-    st.write(f"Annotating **{view_name}** - Slice **{slice_num}**{mask_info}")
+    st.write(f"**{view_name}** - Slice **{slice_num}**{mask_info}")
     
     # Convert numpy array to PIL Image
     bg_pil = Image.fromarray(img_rgb)
     logger.warning(
-        "bg_pil ready | mode=%s | size=%s | upload=%s | view=%s | slice=%s",
+        "Image ready | mode=%s | size=%s | upload=%s | view=%s | slice=%s",
         bg_pil.mode,
         bg_pil.size,
         upload_id or "N/A",
@@ -560,54 +516,122 @@ def open_feedback_dialog(img_rgb, view_name, slice_num, original_filename, mask_
         slice_num,
     )
     
-    # Convert image to base64 for HTML embedding
+    # Convert image to base64 for zoomable HTML viewer
     buffered = io.BytesIO()
     bg_pil.save(buffered, format="PNG")
     img_base64 = base64.b64encode(buffered.getvalue()).decode()
     
-    canvas_height = img_rgb.shape[0]
-    canvas_width = img_rgb.shape[1]
-    logger.warning(
-        "Canvas dimensions | width=%s | height=%s | key=%s",
-        canvas_width,
-        canvas_height,
-        f"canvas_{view_name}_{slice_num}",
-    )
+    col_image, col_feedback = st.columns([2, 1.5])
     
-    col_ctrl, col_canvas, col_feedback = st.columns([1, 3, 1.5])
-    
-    with col_ctrl:
-        stroke_color = st.color_picker("Pick Color", "#FFFF00")
-        stroke_width = st.slider("Stroke Width", 1, 10, 3)
-        tool = st.selectbox("Tool", ("freedraw", "line", "rect", "circle"))
-
-    with col_canvas:
-        canvas_id = f"canvas_{view_name}_{slice_num}"
-
-        canvas_result = st_canvas(
-            fill_color="rgba(255, 255, 255, 0)",
-            stroke_width=stroke_width,
-            stroke_color=stroke_color,
-            background_color="#00000000",
-            background_image=bg_pil,
-            height=canvas_height,
-            width=canvas_width,
-            drawing_mode=tool,
-            key=canvas_id,
-            display_toolbar=True,
-            update_streamlit=True,
-        )
+    with col_image:
+        st.subheader("🔍 Image Viewer")
+        # Zoomable image viewer using HTML/CSS
+        zoom_html = f"""
+        <style>
+            .zoom-container {{
+                width: 100%;
+                max-height: 500px;
+                overflow: auto;
+                border: 2px solid #4a4a4a;
+                border-radius: 8px;
+                background: #1a1a1a;
+                cursor: grab;
+            }}
+            .zoom-container:active {{
+                cursor: grabbing;
+            }}
+            .zoom-image {{
+                transition: transform 0.1s ease;
+                transform-origin: center center;
+                display: block;
+                margin: auto;
+            }}
+            .zoom-controls {{
+                display: flex;
+                gap: 10px;
+                margin-bottom: 10px;
+                align-items: center;
+            }}
+            .zoom-btn {{
+                padding: 8px 16px;
+                border: 1px solid #555;
+                border-radius: 6px;
+                background: #2d2d2d;
+                color: #fff;
+                cursor: pointer;
+                font-size: 14px;
+            }}
+            .zoom-btn:hover {{
+                background: #3d3d3d;
+            }}
+            .zoom-level {{
+                color: #aaa;
+                font-size: 14px;
+            }}
+        </style>
+        <div class="zoom-controls">
+            <button class="zoom-btn" onclick="zoomOut()">➖ Zoom Out</button>
+            <button class="zoom-btn" onclick="zoomIn()">➕ Zoom In</button>
+            <button class="zoom-btn" onclick="resetZoom()">🔄 Reset</button>
+            <span class="zoom-level" id="zoomLevel">100%</span>
+        </div>
+        <div class="zoom-container" id="zoomContainer">
+            <img src="data:image/png;base64,{img_base64}" 
+                 class="zoom-image" 
+                 id="zoomImage"
+                 style="max-width: 100%; height: auto;" />
+        </div>
+        <script>
+            let scale = 1;
+            const img = document.getElementById('zoomImage');
+            const container = document.getElementById('zoomContainer');
+            const zoomLevel = document.getElementById('zoomLevel');
+            
+            function updateZoom() {{
+                img.style.transform = `scale(${{scale}})`;
+                img.style.width = scale > 1 ? `${{100 * scale}}%` : '100%';
+                zoomLevel.textContent = `${{Math.round(scale * 100)}}%`;
+            }}
+            
+            function zoomIn() {{
+                scale = Math.min(scale + 0.25, 4);
+                updateZoom();
+            }}
+            
+            function zoomOut() {{
+                scale = Math.max(scale - 0.25, 0.5);
+                updateZoom();
+            }}
+            
+            function resetZoom() {{
+                scale = 1;
+                updateZoom();
+                container.scrollTop = 0;
+                container.scrollLeft = 0;
+            }}
+            
+            container.addEventListener('wheel', function(e) {{
+                e.preventDefault();
+                if (e.deltaY < 0) {{
+                    zoomIn();
+                }} else {{
+                    zoomOut();
+                }}
+            }});
+        </script>
+        """
+        st.components.v1.html(zoom_html, height=580)
 
     with col_feedback:
-        st.subheader("📝 Text Feedback")
+        st.subheader("📝 Feedback")
         annotator_name = st.text_input(
             "Your name *",
             key=f"annotator_name_{view_name}_{slice_num}",
         )
         text_feedback = st.text_area(
             "Comments",
-            placeholder="Enter your feedback here...",
-            height=250,
+            placeholder="Enter your feedback about this slice...",
+            height=300,
             label_visibility="collapsed",
         )
 
@@ -615,49 +639,22 @@ def open_feedback_dialog(img_rgb, view_name, slice_num, original_filename, mask_
     st.divider()
     col_left, col_btn, col_right = st.columns([2, 1, 2])
     with col_btn:
-        submit_clicked = st.button("🚀 Submit Feedback", width='stretch')
+        submit_clicked = st.button("🚀 Submit Feedback", key=f"submit_{view_name}_{slice_num}", use_container_width=True)
     
     if submit_clicked:
         if not annotator_name.strip():
             logger.warning("Feedback submit blocked due to missing name | view=%s | slice=%s", view_name, slice_num)
             st.error("Name is required to submit feedback.")
             return
-        if canvas_result.image_data is None:
-            logger.warning(
-                "Canvas has no image data | upload=%s | view=%s | slice=%s",
-                upload_id or "N/A",
-                view_name,
-                slice_num,
-            )
-            st.warning("No drawing data available.")
-            return
 
-        canvas_data = canvas_result.image_data.astype(np.uint8)
-        black_mask = (canvas_data[:, :, 0] < 10) & (canvas_data[:, :, 1] < 10) & (canvas_data[:, :, 2] < 10)
-        canvas_data[black_mask, 3] = 0
-
-        drawing_layer = Image.fromarray(canvas_data, "RGBA")
-        bg_rgba = bg_pil.convert("RGBA")
-        drawing_layer = drawing_layer.resize(bg_rgba.size)
-        final_img = Image.alpha_composite(bg_rgba, drawing_layer).convert("RGB")
-
+        # Save the slice image directly (DICOM + overlay, no canvas drawing)
         buf = io.BytesIO()
-        final_img.save(buf, format="PNG")
-        final_img_base64 = base64.b64encode(buf.getvalue()).decode()
+        bg_pil.save(buf, format="PNG")
+        buf.seek(0)
 
         sample_name = os.path.splitext(original_filename)[0]
         mask_suffix = f"_{os.path.splitext(mask_name)[0]}" if mask_name and mask_name != "None" else "_nomask"
         fname = f"feedback_{sample_name}{mask_suffix}_{view_name}_{slice_num}.png"
-
-        feedback_payload = {
-            "sample_name": sample_name,
-            "mask_name": mask_name if mask_name and mask_name != "None" else None,
-            "view": view_name,
-            "slice_number": slice_num,
-            "filename": fname,
-            "text_feedback": text_feedback if text_feedback else None,
-            "image_base64": final_img_base64,
-        }
 
         files = [
             (
@@ -712,7 +709,7 @@ def open_feedback_dialog(img_rgb, view_name, slice_num, original_filename, mask_
 
 # --- Main Application Logic ---
 
-st.title("Annotate and Feedback")
+st.title("Slice-wise Feedback")
 
 params = st.query_params
 upload_id_param = params.get("id")
@@ -734,6 +731,9 @@ st.session_state["_last_active_upload_id"] = active_upload_id
 if not active_upload_id:
     st.error("Upload ID missing. Please open this page from the dashboard.")
     st.stop()
+
+# Link to view previous comments on UploadDetail page
+st.link_button("📋 View previous comments", url=f"/UploadDetail?id={active_upload_id}")
 
 st.sidebar.title("Navigation")
 st.sidebar.page_link("app.py", label="Home", icon="🏠")
@@ -860,11 +860,12 @@ if volume_ready and volume_bundle:
     if show_mask and mask is not None:
         color_map, _ = get_color_mapping(np.unique(mask))
 
+    # Mask selection in sidebar
     if masks:
-        st.divider()
-        st.header("Mask Selection")
+        st.sidebar.divider()
+        st.sidebar.header("Mask Selection")
         mask_options = ["None"] + list(masks.keys())
-        selected_mask = st.radio(
+        selected_mask = st.sidebar.radio(
             "Select Active Mask",
             options=mask_options,
             index=mask_options.index(st.session_state.get("active_mask", "None"))
@@ -881,10 +882,35 @@ if volume_ready and volume_bundle:
         else:
             color_map = None
 
-    if active_mask_name != "None":
-        st.info(f"🎭 Active Mask: **{active_mask_name}**")
+    # Color legend in sidebar
+    if color_map is not None and mask is not None:
+        _, label_names = get_color_mapping(np.unique(mask))
+        st.sidebar.divider()
+        st.sidebar.subheader("📋 Label Color Map")
+        legend_box_html = """
+        <div style='
+            border-radius: 10px;
+            padding: 12px 16px;
+            box-shadow: 0 1.5px 10px rgba(0,0,0,0.07);
+            margin-bottom: 12px;
+            border: 1.7px solid #d4dde7;
+        '>
+        """
+        for class_val in sorted(color_map.keys()):
+            color = color_map[class_val]
+            label = label_names.get(class_val, f"Class {class_val}")
+            color_hex = f"#{color[0]:02x}{color[1]:02x}{color[2]:02x}"
+            legend_box_html += (
+                f"<div style='display: flex; align-items: center; gap: 8px; margin-bottom: 6px;'>"
+                f"<div style='width:16px; height:16px; background:{color_hex}; border-radius: 3px;'></div>"
+                f"<span style='font-size:13px;'><strong>{class_val}</strong>: {label}</span>"
+                f"</div>"
+            )
+        legend_box_html += "</div>"
+        st.sidebar.markdown(legend_box_html, unsafe_allow_html=True)
 
-    
+    if active_mask_name != "None":
+        st.info(f"Active Mask: **{active_mask_name}**")
 
     col_ax, col_cor, col_sag = st.columns(3)
     asp_coronal = spacing[2] / spacing[0]
@@ -895,8 +921,8 @@ if volume_ready and volume_bundle:
         z_idx = st.slider("Z Slice", 0, vol.shape[0] - 1, vol.shape[0] // 2)
         mask_slice = mask[z_idx, :, :] if mask is not None and show_mask else None
         img_z = process_slice(vol[z_idx, :, :], mask_slice, level, width, 1.0, color_map)
-        st.image(img_z, width='stretch')
-        if st.button("✎ Annotate Axial", key="btn_z"):
+        st.image(img_z, use_container_width=True)
+        if st.button("💬 Add comments", key="btn_z"):
             open_feedback_dialog(img_z, "Axial", z_idx, dicom_filename, active_mask_name, upload_id=active_upload_id or None)
 
     with col_cor:
@@ -905,8 +931,8 @@ if volume_ready and volume_bundle:
         slice_img = np.flipud(vol[:, y_idx, :])
         mask_slice = np.flipud(mask[:, y_idx, :]) if mask is not None and show_mask else None
         img_y = process_slice(slice_img, mask_slice, level, width, asp_coronal, color_map)
-        st.image(img_y, width='stretch')
-        if st.button("✎ Annotate Coronal", key="btn_y"):
+        st.image(img_y, use_container_width=True)
+        if st.button("💬 Add comments", key="btn_y"):
             open_feedback_dialog(img_y, "Coronal", y_idx, dicom_filename, active_mask_name, upload_id=active_upload_id or None)
 
     with col_sag:
@@ -915,39 +941,10 @@ if volume_ready and volume_bundle:
         slice_img = np.flipud(vol[:, :, x_idx])
         mask_slice = np.flipud(mask[:, :, x_idx]) if mask is not None and show_mask else None
         img_x = process_slice(slice_img, mask_slice, level, width, asp_sagittal, color_map)
-        st.image(img_x, width='stretch')
-        if st.button("✎ Annotate Sagittal", key="btn_x"):
+        st.image(img_x, use_container_width=True)
+        if st.button("💬 Add comments", key="btn_x"):
             open_feedback_dialog(img_x, "Sagittal", x_idx, dicom_filename, active_mask_name, upload_id=active_upload_id or None)
 
-
-    if color_map is not None and mask is not None:
-        _, label_names = get_color_mapping(np.unique(mask))
-        st.divider()
-        st.subheader("📋 Label Color Map")
-        legend_box_html = """
-        <div style='
-            border-radius: 10px;
-            padding: 15px 28px 15px 24px;
-            box-shadow: 0 1.5px 10px rgba(0,0,0,0.07);
-            margin-bottom: 22px;
-            max-width: 370px;
-            border: 1.7px solid #d4dde7;
-            display: inline-block;
-        '>
-        """
-        for class_val in sorted(color_map.keys()):
-            color = color_map[class_val]
-            label = label_names.get(class_val, f"Class {class_val}")
-            color_hex = f"#{color[0]:02x}{color[1]:02x}{color[2]:02x}"
-            legend_box_html += (
-                f"<div style='display: flex; align-items: center; gap: 11px; margin-bottom: 8px;'>"
-                f"<div style='width:22px; height:22px; background:{color_hex};'></div>"
-                f"<span style='font-size:15px;'><strong>{class_val}</strong>: {label}</span>"
-                f"</div>"
-            )
-        legend_box_html += "</div>"
-        st.markdown(legend_box_html, unsafe_allow_html=True)
-        st.divider()
 elif volume_ready and not volume_bundle:
     st.error("Volume metadata loaded but cache entry missing. Please reload this page.")
     st.stop()

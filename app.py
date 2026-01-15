@@ -169,7 +169,7 @@ if uploaded_file and st.button("🚀 Run Inference"):
                         )
                     with col2:
                         if upload_id:
-                            st.link_button("💬 Add Comments", f"/UploadDetail?id={upload_id}")
+                            st.link_button("💬 Add Comments", f"/AnnotationFeedback?id={upload_id}")
 
                     if upload_id and not server_finalized:
                         try:

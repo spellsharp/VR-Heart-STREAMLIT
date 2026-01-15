@@ -9,9 +9,7 @@ st.sidebar.page_link("app.py", label="Home", icon="🏠")
 st.sidebar.page_link("pages/Dashboard.py", label="Dashboard", icon="🗂️")
 st.title("📄 Upload Detail")
 
-# backend_url = st.secrets["BACKEND_URL"]
 backend_url = st.secrets["BACKEND_URL"]
-
 st.markdown(
     """
     <style>

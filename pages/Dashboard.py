@@ -44,6 +44,10 @@ def build_detail_url(upload_id):
         return None
     return f"{DETAIL_PAGE_ROUTE}?{urlencode({'id': str(upload_id)})}"
 
+def build_annotate_url(upload_id):
+    if not upload_id:
+        return None
+    return f"/AnnotationFeedback?id={upload_id}"
 @st.cache_data(ttl=30, show_spinner=False)
 def fetch_uploads(api_base: str):
     try:
@@ -97,9 +101,9 @@ else:
             else:
                 cols[3].markdown(f":orange[{status}]")
 
-            detail_url = build_detail_url(upload_id)
-            if detail_url and status == "Completed":
-                cols[4].link_button("Add Comments", url=detail_url, icon="💬", help="Provide clinical feedback", width='stretch')
+            annotate_url = build_annotate_url(upload_id)
+            if annotate_url and status == "Completed":
+                cols[4].link_button("Add Comments", url=annotate_url, icon="💬", help="Provide clinical feedback", width='stretch')
             else:
                 cols[4].empty()
 
