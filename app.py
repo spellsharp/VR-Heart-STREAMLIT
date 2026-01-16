@@ -1,9 +1,11 @@
 # Home
-import streamlit as st
-import requests
+import logging
+import os
 import time
 from io import BytesIO
-import os
+
+import requests
+import streamlit as st
 
 # --- Page Config ---
 st.set_page_config(page_title="VR-Heart Inference", layout="centered")
@@ -14,6 +16,7 @@ st.sidebar.page_link("app.py", label="Home", icon="🏠")
 st.sidebar.page_link("pages/Dashboard.py", label="Dashboard", icon="🗂️")
 
 backend_url = st.secrets["BACKEND_URL"]
+logger = logging.getLogger(__name__)
 
 # --- Custom CSS ---
 st.markdown("""
@@ -70,6 +73,9 @@ stopwatch_placeholder = st.empty()
 # --- Helpers ---
 def create_pending_upload():
     try:
+        if not uploaded_file:
+            st.warning("Upload a ZIP before starting inference.")
+            return None
         payload = {
             "doctor_name": doctor_name,
             "doctor_email": doctor_email,
@@ -158,6 +164,22 @@ if uploaded_file and st.button("🚀 Run Inference"):
                     drive_combined_name = response.headers.get("X-Drive-Combined-Name", "")
                     server_finalized = response.headers.get("X-Upload-Finalized", "").lower() == "true"
 
+                    logger.info(
+                        "Inference response | upload_id=%s finalized=%s "
+                        "input_id=%s output_id=%s combined_id=%s "
+                        "input_name=%s output_name=%s combined_name=%s "
+                        "response_bytes=%d",
+                        upload_id,
+                        server_finalized,
+                        drive_input_id,
+                        drive_output_id,
+                        drive_combined_id,
+                        drive_input_name,
+                        drive_output_name,
+                        drive_combined_name,
+                        len(response.content),
+                    )
+
                     safe_base = os.path.splitext(uploaded_file.name)[0]
                     safe_base = safe_base.replace(" ", "_").replace("/", "_")
                     default_filename = f"{safe_base}_results.zip"
@@ -195,17 +217,20 @@ if uploaded_file and st.button("🚀 Run Inference"):
                                 st.warning("Failed to finalize dashboard record.")
                         except Exception as exc:
                             st.warning(f"Dashboard finalize failed: {exc}")
+                    st.session_state.pop("current_upload_id", None)
                 else:
                     st.error(f"❌ Inference failed! Server responded with: {response.status_code}")
                     st.text_area("Error Details", response.text, height=150)
                     if upload_id:
                         mark_upload_failed(upload_id)
+                    st.session_state.pop("current_upload_id", None)
             except Exception as e:
                 running = False
                 st.error("⚠️ An unexpected error occurred.")
                 st.text_area("Exception", str(e), height=150)
                 if upload_id:
                     mark_upload_failed(upload_id)
+                st.session_state.pop("current_upload_id", None)
                 break
 
 # Optional footer
