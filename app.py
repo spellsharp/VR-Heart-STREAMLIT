@@ -74,15 +74,16 @@ def create_pending_upload():
             "doctor_name": doctor_name,
             "doctor_email": doctor_email,
             "original_filename": uploaded_file.name if uploaded_file else "",
-            "disable_segmentation": str(disable_segmentation).lower(),
+            "disable_segmentation": disable_segmentation,
         }
-        print(payload)
         resp = requests.post(f"{backend_url}/api/uploads/pending/", data=payload, timeout=3600)
-        print(resp.status_code)
-        print(resp.text)
         if resp.status_code in (200, 201):
             data = resp.json()
-            return data.get("id")
+            upload_id = data.get("id")
+            if upload_id:
+                st.session_state["current_upload_id"] = upload_id
+                return upload_id
+            st.warning("Dashboard response did not include an upload ID.")
         else:
             st.warning("Failed to register upload with dashboard service.")
     except Exception as exc:
@@ -103,6 +104,9 @@ def mark_upload_failed(upload_id: str):
 if uploaded_file and st.button("🚀 Run Inference"):
     with st.spinner("⏳ Running inference... this may take a few minutes..."):
         upload_id = create_pending_upload()
+        if not upload_id:
+            st.error("Could not register upload. Please retry once the dashboard is reachable.")
+            st.stop()
 
         # Start stopwatch
         start_time = time.time()
