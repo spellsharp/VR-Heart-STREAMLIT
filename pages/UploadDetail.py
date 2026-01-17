@@ -7,6 +7,10 @@ st.set_page_config(page_title="Upload Detail", layout="centered")
 st.sidebar.title("Navigation")
 st.sidebar.page_link("app.py", label="Home", icon="🏠")
 st.sidebar.page_link("pages/Dashboard.py", label="Dashboard", icon="🗂️")
+params = st.query_params
+upload_id = params.get("id")
+annotate_url = f"/SlicewiseFeedback?id={upload_id}"
+st.link_button("Back to DICOM Viewer", url=annotate_url, icon="🖌️")
 st.title("📄 Upload Detail")
 
 backend_url = st.secrets["BACKEND_URL"]
@@ -55,8 +59,7 @@ def fetch_attachment_bytes(url: str) -> bytes:
     return resp.content
 
 
-params = st.query_params
-upload_id = params.get("id")
+
 
 if isinstance(upload_id, list):
     upload_id = upload_id[0] if upload_id else None
@@ -124,8 +127,6 @@ else:
 
 # st.divider()
 # st.subheader("Annotate")
-annotate_url = f"/AnnotationFeedback?id={upload_id}"
-st.link_button("Annotate", url=annotate_url, icon="🖌️")
 
 st.divider()
 st.subheader("Feedback")
