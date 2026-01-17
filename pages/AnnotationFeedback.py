@@ -525,7 +525,7 @@ def open_feedback_dialog(img_rgb, view_name, slice_num, original_filename, mask_
     
     with col_image:
         st.subheader("🔍 Image Viewer")
-        # Zoomable image viewer using HTML/CSS
+        # Zoomable image viewer using HTML/CSS with click-and-drag panning
         zoom_html = f"""
         <style>
             .zoom-container {{
@@ -536,15 +536,17 @@ def open_feedback_dialog(img_rgb, view_name, slice_num, original_filename, mask_
                 border-radius: 8px;
                 background: #1a1a1a;
                 cursor: grab;
+                user-select: none;
             }}
-            .zoom-container:active {{
+            .zoom-container.dragging {{
                 cursor: grabbing;
             }}
             .zoom-image {{
-                transition: transform 0.1s ease;
-                transform-origin: center center;
+                transform-origin: top left;
                 display: block;
-                margin: auto;
+                pointer-events: none;
+                user-select: none;
+                -webkit-user-drag: none;
             }}
             .zoom-controls {{
                 display: flex;
@@ -579,17 +581,20 @@ def open_feedback_dialog(img_rgb, view_name, slice_num, original_filename, mask_
             <img src="data:image/png;base64,{img_base64}" 
                  class="zoom-image" 
                  id="zoomImage"
-                 style="max-width: 100%; height: auto;" />
+                 draggable="false" />
         </div>
         <script>
             let scale = 1;
+            let isDragging = false;
+            let startX, startY, scrollLeft, scrollTop;
+            
             const img = document.getElementById('zoomImage');
             const container = document.getElementById('zoomContainer');
             const zoomLevel = document.getElementById('zoomLevel');
             
             function updateZoom() {{
-                img.style.transform = `scale(${{scale}})`;
-                img.style.width = scale > 1 ? `${{100 * scale}}%` : '100%';
+                img.style.width = `${{100 * scale}}%`;
+                img.style.height = 'auto';
                 zoomLevel.textContent = `${{Math.round(scale * 100)}}%`;
             }}
             
@@ -610,6 +615,7 @@ def open_feedback_dialog(img_rgb, view_name, slice_num, original_filename, mask_
                 container.scrollLeft = 0;
             }}
             
+            // Mouse wheel zoom
             container.addEventListener('wheel', function(e) {{
                 e.preventDefault();
                 if (e.deltaY < 0) {{
@@ -617,6 +623,38 @@ def open_feedback_dialog(img_rgb, view_name, slice_num, original_filename, mask_
                 }} else {{
                     zoomOut();
                 }}
+            }});
+            
+            // Click and drag to pan
+            container.addEventListener('mousedown', function(e) {{
+                isDragging = true;
+                container.classList.add('dragging');
+                startX = e.pageX - container.offsetLeft;
+                startY = e.pageY - container.offsetTop;
+                scrollLeft = container.scrollLeft;
+                scrollTop = container.scrollTop;
+                e.preventDefault();
+            }});
+            
+            container.addEventListener('mouseleave', function() {{
+                isDragging = false;
+                container.classList.remove('dragging');
+            }});
+            
+            container.addEventListener('mouseup', function() {{
+                isDragging = false;
+                container.classList.remove('dragging');
+            }});
+            
+            container.addEventListener('mousemove', function(e) {{
+                if (!isDragging) return;
+                e.preventDefault();
+                const x = e.pageX - container.offsetLeft;
+                const y = e.pageY - container.offsetTop;
+                const walkX = (x - startX) * 1.5;
+                const walkY = (y - startY) * 1.5;
+                container.scrollLeft = scrollLeft - walkX;
+                container.scrollTop = scrollTop - walkY;
             }});
         </script>
         """
@@ -631,8 +669,16 @@ def open_feedback_dialog(img_rgb, view_name, slice_num, original_filename, mask_
         text_feedback = st.text_area(
             "Comments",
             placeholder="Enter your feedback about this slice...",
-            height=300,
+            height=200,
             label_visibility="collapsed",
+        )
+        st.markdown("**Attach files** (optional)")
+        uploaded_files = st.file_uploader(
+            "Attach additional files",
+            accept_multiple_files=True,
+            key=f"file_upload_{view_name}_{slice_num}",
+            label_visibility="collapsed",
+            help="Upload images, documents, or other files to include with your feedback",
         )
 
     # Centered submit button
@@ -662,6 +708,16 @@ def open_feedback_dialog(img_rgb, view_name, slice_num, original_filename, mask_
                 (fname, buf.getvalue(), "image/png"),
             )
         ]
+        
+        # Add any user-uploaded files to the attachments
+        if uploaded_files:
+            for uploaded_file in uploaded_files:
+                files.append(
+                    (
+                        "attachments",
+                        (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type or "application/octet-stream"),
+                    )
+                )
         payload = {
             "author_name": annotator_name.strip(),
             "author_email": st.session_state.get("annotator_email", ""),
@@ -674,10 +730,11 @@ def open_feedback_dialog(img_rgb, view_name, slice_num, original_filename, mask_
             with st.spinner("Submitting feedback to dashboard..."):
                 try:
                     logger.warning(
-                        "Submitting feedback | upload=%s | file=%s | payload_has_text=%s",
+                        "Submitting feedback | upload=%s | file=%s | payload_has_text=%s | extra_files=%d",
                         upload_id,
                         fname,
                         bool(text_feedback),
+                        len(uploaded_files) if uploaded_files else 0,
                     )
                     resp = requests.post(
                         f"{backend_url}/api/uploads/{upload_id}/feedback/",
