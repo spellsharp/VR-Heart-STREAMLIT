@@ -752,7 +752,7 @@ results_zip_entry = None
 
 if active_upload_id:
     try:
-        with st.spinner("Fetching study from Drive..."):
+        with st.spinner("Fetching study details..."):
             drive_detail = get_cached_upload_detail(backend_url, active_upload_id)
             download_kind = "input"
             download_filename = (
@@ -799,7 +799,7 @@ if active_upload_id:
                         mask_kind,
                         mask_filename,
                     )
-        status_placeholder.success(f"Loaded {drive_filename or download_filename} from Drive.")
+        status_placeholder.success(f"Loaded {drive_filename or download_filename}.")
     except requests.HTTPError as exc:
         detail_msg = exc.response.text if exc.response is not None else str(exc)
         status_placeholder.error(f"Failed to load upload {active_upload_id}: {detail_msg}")
@@ -950,6 +950,6 @@ elif volume_ready and not volume_bundle:
     st.stop()
 else:
     if active_upload_id:
-        st.warning("Unable to load this upload from Drive. Check the ID or try again.")
+        st.warning("Unable to load this upload. Try again later.")
     else:
         st.info("Provide an upload ID or upload a DICOM ZIP to begin.")

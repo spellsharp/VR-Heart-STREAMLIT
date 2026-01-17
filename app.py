@@ -107,8 +107,8 @@ def mark_upload_failed(upload_id: str):
 
 
 # --- Inference Button ---
-if uploaded_file and st.button("🚀 Run Inference"):
-    with st.spinner("⏳ Running inference... this may take a few minutes..."):
+if uploaded_file and st.button("🚀 Get Prediction"):
+    with st.spinner("⏳ Getting prediction... this may take a few minutes..."):
         upload_id = create_pending_upload()
         if not upload_id:
             st.error("Could not register upload. Please retry once the dashboard is reachable.")
