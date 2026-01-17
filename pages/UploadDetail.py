@@ -9,8 +9,8 @@ st.sidebar.page_link("app.py", label="Home", icon="🏠")
 st.sidebar.page_link("pages/Dashboard.py", label="Dashboard", icon="🗂️")
 params = st.query_params
 upload_id = params.get("id")
-annotate_url = f"/SlicewiseFeedback?id={upload_id}"
-st.link_button("Back to DICOM Viewer", url=annotate_url)
+# annotate_url = f"/SlicewiseFeedback?id={upload_id}"
+# st.link_button("Back to DICOM Viewer", url=annotate_url)
 st.title("📄 Upload Detail")
 
 backend_url = st.secrets["BACKEND_URL"]
