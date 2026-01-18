@@ -136,7 +136,7 @@ def clear_global_volume(reason: str | None = None) -> list[str]:
 
 
 def fetch_upload_detail(api_base: str, upload_id: str):
-    resp = requests.get(f"{api_base}/api/uploads/{upload_id}/", timeout=120)
+    resp = requests.get(f"{api_base}/api/uploads/{upload_id}/", timeout=3600)
     resp.raise_for_status()
     return resp.json()
 
@@ -153,7 +153,7 @@ def fetch_upload_archive(api_base: str, upload_id: str, kind: str, filename_hint
         f"{api_base}/api/uploads/{upload_id}/download/",
         params={"kind": kind},
         stream=True,
-        timeout=600,
+        timeout=3600,
     )
     resp.raise_for_status()
     suffix = ".zip"
@@ -683,7 +683,7 @@ def open_feedback_dialog(img_rgb, view_name, slice_num, original_filename, mask_
                         f"{backend_url}/api/uploads/{upload_id}/feedback/",
                         data=payload,
                         files=files,
-                        timeout=300,
+                        timeout=3600,
                     )
                 except requests.RequestException as exc:
                     logger.exception("Feedback submission failed | upload=%s | error=%s", upload_id, exc)

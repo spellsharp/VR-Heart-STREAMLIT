@@ -54,7 +54,7 @@ def is_image_attachment(attachment: dict) -> bool:
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_attachment_bytes(url: str) -> bytes:
     """Download attachment data so we can preview images inline."""
-    resp = requests.get(url, timeout=120)
+    resp = requests.get(url, timeout=3600)
     resp.raise_for_status()
     return resp.content
 
@@ -77,12 +77,12 @@ if not upload_id:
 st.session_state["selected_upload_id"] = upload_id
 
 def fetch_detail(api_base: str, uid: str):
-    resp = requests.get(f"{api_base}/api/uploads/{uid}/", timeout=300)
+    resp = requests.get(f"{api_base}/api/uploads/{uid}/", timeout=3600)
     resp.raise_for_status()
     return resp.json()
 
 def fetch_feedback(api_base: str, uid: str):
-    resp = requests.get(f"{api_base}/api/uploads/{uid}/feedback/", timeout=300)
+    resp = requests.get(f"{api_base}/api/uploads/{uid}/feedback/", timeout=3600)
     resp.raise_for_status()
     return resp.json()
 
@@ -92,7 +92,7 @@ def delete_feedback_record(api_base: str, upload_id: str, feedback_id: int, dele
     resp = requests.delete(
         f"{api_base}/api/uploads/{upload_id}/feedback/{feedback_id}/",
         params=params or None,
-        timeout=120,
+        timeout=3600,
     )
     resp.raise_for_status()
     return resp.json()
@@ -226,7 +226,7 @@ with st.form("feedback_form", clear_on_submit=True):
                 f"{backend_url}/api/uploads/{upload_id}/feedback/",
                 data=payload,
                 files=files if files else None,
-                timeout=300,
+                timeout=3600,
             )
             if r.status_code in (200, 201):
                 st.success("Thanks for your feedback!")

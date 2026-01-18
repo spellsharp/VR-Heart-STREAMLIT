@@ -101,7 +101,7 @@ def mark_upload_failed(upload_id: str):
     if not upload_id:
         return
     try:
-        requests.post(f"{backend_url}/api/uploads/{upload_id}/fail/", timeout=15)
+        requests.post(f"{backend_url}/api/uploads/{upload_id}/fail/", timeout=3600)
     except Exception:
         pass
 
@@ -211,7 +211,7 @@ if uploaded_file and st.button("🚀 Get Prediction"):
                             resp = requests.post(
                                 f"{backend_url}/api/uploads/{upload_id}/complete/",
                                 data=complete_payload,
-                                timeout=60,
+                                timeout=3600,
                             )
                             if resp.status_code not in (200, 201):
                                 st.warning("Failed to finalize dashboard record.")

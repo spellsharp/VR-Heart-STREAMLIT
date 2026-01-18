@@ -51,7 +51,7 @@ def build_annotate_url(upload_id):
 @st.cache_data(ttl=30, show_spinner=False)
 def fetch_uploads(api_base: str):
     try:
-        resp = requests.get(f"{api_base}/api/uploads/", timeout=30)
+        resp = requests.get(f"{api_base}/api/uploads/", timeout=3600)
         resp.raise_for_status()
         return resp.json()
     except Exception as e:
@@ -63,7 +63,7 @@ def delete_upload_record(api_base: str, upload_id: str, delete_drive: bool = Fal
     resp = requests.delete(
         f"{api_base}/api/uploads/{upload_id}/",
         params=params or None,
-        timeout=60,
+        timeout=3600,
     )
     resp.raise_for_status()
     return resp.json()
