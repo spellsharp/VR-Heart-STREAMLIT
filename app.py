@@ -86,6 +86,7 @@ def create_pending_upload():
         if resp.status_code in (200, 201):
             data = resp.json()
             upload_id = data.get("id")
+            logging.warning(f"Pending upload {upload_id} created.")
             if upload_id:
                 st.session_state["current_upload_id"] = upload_id
                 return upload_id
