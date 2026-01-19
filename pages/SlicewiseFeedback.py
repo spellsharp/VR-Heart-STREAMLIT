@@ -740,8 +740,8 @@ st.sidebar.page_link("app.py", label="Home", icon="🏠")
 st.sidebar.page_link("pages/Dashboard.py", label="Dashboard", icon="🗂️")
 
 st.sidebar.header("Image Controls")
-level = st.sidebar.slider("Window Level", -1000, 1000, 40)
-width = st.sidebar.slider("Window Width", 1, 2000, 400)
+level = st.sidebar.slider("Window Level", -1000, 1000, 200)
+width = st.sidebar.slider("Window Width", 1, 2000, 600)
 
 status_placeholder = st.empty()
 drive_detail = None
