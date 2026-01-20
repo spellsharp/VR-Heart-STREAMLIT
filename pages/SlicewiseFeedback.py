@@ -284,16 +284,16 @@ def get_color_mapping(unique_values):
     unique_values = [v for v in unique_values if v != 0]
     if len(unique_values) > 1:
         mapping = {
-        1: ([255, 0, 0], "Left Ventricle (LV)"),
-        2: ([200, 50, 50], "Right Ventricle (RV)"),
-        3: ([0, 100, 255], "Left Atrium (LA)"),
-        4: ([0, 0, 255], "Right Atrium (RA)"),
-        5: ([0, 255, 0], "Aorta (AO)"),
-        6: ([255, 255, 0], "Pulmonary Artery (PA)")
+        1: ([255, 20, 20], "Left Ventricle (LV)"),      # Bright Red
+        2: ([20, 255, 255], "Right Ventricle (RV)"),     # Bright Cyan
+        3: ([20, 255, 20], "Left Atrium (LA)"),          # Bright Green
+        4: ([255, 20, 255], "Right Atrium (RA)"),        # Bright Magenta
+        5: ([255, 165, 20], "Aorta (AO)"),               # Bright Orange
+        6: ([160, 20, 255], "Pulmonary Artery (PA)")     # Bright Purple
     }
     else:
         mapping = {
-            1: ([255, 0, 0], "Heart")
+            1: ([255, 20, 20], "Heart")  # Bright Red
         }
     for val in unique_values:
         val_int = int(val)
