@@ -103,7 +103,7 @@ else:
 
             annotate_url = build_annotate_url(upload_id)
             if annotate_url and status == "Completed":
-                cols[4].link_button("Add Comments", url=annotate_url, icon="💬", help="Provide clinical feedback", width='stretch')
+                cols[4].link_button("View Prediction", url=annotate_url, icon="🔍", help="View the segmentation predictions", width='stretch')
             else:
                 cols[4].empty()
 
