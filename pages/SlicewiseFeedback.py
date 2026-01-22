@@ -16,8 +16,10 @@ import requests
 # from streamlit_drawable_canvas import st_canvas
 from PIL import Image
 from typing import Any
+import json
+from datetime import datetime, timezone
 
-st.set_page_config(layout="wide", page_title="Slice-wise Feedback")
+st.set_page_config(layout="wide", page_title="Viewing and Feedback")
 backend_url = st.secrets["BACKEND_URL"]
 logger = logging.getLogger("annotation_feedback")
 logger.setLevel(logging.INFO)
@@ -709,7 +711,7 @@ def open_feedback_dialog(img_rgb, view_name, slice_num, original_filename, mask_
 
 # --- Main Application Logic ---
 
-st.title("Slice-wise Feedback")
+st.title("Viewing and Feedback")
 
 params = st.query_params
 upload_id_param = params.get("id")
@@ -912,6 +914,8 @@ if volume_ready and volume_bundle:
     if active_mask_name != "None":
         st.info(f"Active Mask: **{active_mask_name}**")
 
+    st.header("DICOM Viewing and Feedback")
+
     col_ax, col_cor, col_sag = st.columns(3)
     asp_coronal = spacing[2] / spacing[0]
     asp_sagittal = spacing[2] / spacing[1]
@@ -945,11 +949,306 @@ if volume_ready and volume_bundle:
         if st.button("💬 Add comments", key="btn_x"):
             open_feedback_dialog(img_x, "Sagittal", x_idx, dicom_filename, active_mask_name, upload_id=active_upload_id or None)
 
-elif volume_ready and not volume_bundle:
-    st.error("Volume metadata loaded but cache entry missing. Please reload this page.")
-    st.stop()
+# --- Overall Sample Assessment ---
+st.divider()
+# --- Overall Sample Assessment ---
+st.divider()
+st.header("Overall Sample Assessment")
+
+# Initialize session state for overall feedback
+if "overall_feedback_submitted" not in st.session_state:
+    st.session_state.overall_feedback_submitted = False
+
+# A stable prefix so widgets don't collide across uploads
+_upload_key = f"overall_{active_upload_id}"
+
+if not st.session_state.overall_feedback_submitted:
+
+    # Rating options (unchanged data)
+    rating_options = ["1 - Poor", "2 - Fair", "3 - Good", "4 - Very Good", "5 - Excellent"]
+    rating_values = [1, 2, 3, 4, 5]
+
+    cardiac_classes = {
+        "LV": "Left Ventricle",
+        "RV": "Right Ventricle",
+        "LA": "Left Atrium",
+        "RA": "Right Atrium",
+        "AO": "Aorta",
+        "PA": "Pulmonary Artery",
+    }
+
+    chd_phenotypes = [
+        "Ventricular Septal Defect (VSD)",
+        "Atrial Septal Defect (ASD)",
+        "Tetralogy of Fallot (TOF)",
+        "Transposition of Great Arteries (TGA)",
+        "Truncus Arteriosus",
+        "Double Outlet Right Ventricle (DORV)",
+        "Hypoplastic Left Heart Syndrome (HLHS)",
+        "Coarctation of Aorta",
+        "Pulmonary Stenosis",
+        "Aortic Stenosis",
+        "Patent Ductus Arteriosus (PDA)",
+    ]
+
+    # Separate issue lists for bloodpool vs structural segmentation
+    bloodpool_issues_list = [
+        "Poor boundary definition",
+        "Poor trabeculation/fine structure segmentation",
+        "Misclassification",
+        "Floating artifacts",
+    ]
+
+    structural_issues_list = [
+        "Poor boundary definition",
+        "Poor trabeculation/fine structure segmentation",
+        "Misclassification",
+        "Floating artifacts",
+    ]
+
+    # Put EVERYTHING into one form (UX win, same data)
+    with st.form(f"overall_feedback_form_{_upload_key}", clear_on_submit=False):
+
+        # --- Identity (same data) ---
+        st.subheader("🧑‍⚕️ Annotator")
+        author_name = st.text_input(
+            "Your name *",
+            value=st.session_state.get("annotator_name", ""),
+            key=f"author_name_{_upload_key}",
+        )
+
+        st.divider()
+
+        # --- Ratings (same data, cleaner structure) ---
+        with st.expander("⭐ Quality Ratings", expanded=True):
+            st.markdown("**Bloodpool Segmentation Quality**")
+            bloodpool_rating_idx = st.radio(
+                "Bloodpool Segmentation Quality",
+                options=range(len(rating_options)),
+                format_func=lambda x: rating_options[x],
+                key=f"bloodpool_rating_radio_{_upload_key}",
+                horizontal=True,
+                label_visibility="collapsed",
+            )
+            bloodpool_rating = rating_values[bloodpool_rating_idx]
+
+            st.divider()
+
+            st.markdown("**Cardiac Structure Ratings**")
+
+            # Group ratings into two columns to reduce scroll fatigue (same per-class data)
+            left_keys = ["LV", "RV", "LA"]
+            right_keys = ["RA", "AO", "PA"]
+
+            colL, colR = st.columns(2, gap="large")
+
+            class_ratings = {}
+
+            with colL:
+                for abbr in left_keys:
+                    full_name = cardiac_classes[abbr]
+                    idx = st.radio(
+                        full_name,
+                        options=range(len(rating_options)),
+                        format_func=lambda x: rating_options[x],
+                        key=f"class_rating_radio_{abbr}_{_upload_key}",
+                        horizontal=True,
+                    )
+                    class_ratings[abbr] = rating_values[idx]
+
+            with colR:
+                for abbr in right_keys:
+                    full_name = cardiac_classes[abbr]
+                    idx = st.radio(
+                        full_name,
+                        options=range(len(rating_options)),
+                        format_func=lambda x: rating_options[x],
+                        key=f"class_rating_radio_{abbr}_{_upload_key}",
+                        horizontal=True,
+                    )
+                    class_ratings[abbr] = rating_values[idx]
+
+        # --- Phenotypes (same data, less visually brutal) ---
+        with st.expander("🏥 CHD Phenotypes", expanded=False):
+            st.caption("Select all that apply.")
+
+            # Two-column checkbox layout (same checkbox data)
+            ph_left, ph_right = st.columns(2, gap="large")
+            selected_phenotypes = []
+
+            half = (len(chd_phenotypes) + 1) // 2
+            left_list = chd_phenotypes[:half]
+            right_list = chd_phenotypes[half:]
+
+            def _phen_key(p: str) -> str:
+                safe = p.lower().replace(" ", "_").replace("(", "").replace(")", "").replace("-", "_")
+                return f"phenotype_{safe}_{_upload_key}"
+
+            with ph_left:
+                for phenotype in left_list:
+                    if st.checkbox(phenotype, key=_phen_key(phenotype)):
+                        selected_phenotypes.append(phenotype)
+
+            with ph_right:
+                for phenotype in right_list:
+                    if st.checkbox(phenotype, key=_phen_key(phenotype)):
+                        selected_phenotypes.append(phenotype)
+
+            other_phenotype = st.text_input(
+                "Other phenotype (if not listed above)",
+                placeholder="Specify other CHD phenotype...",
+                key=f"other_phenotype_{_upload_key}",
+            )
+
+        # --- Issues (same data, cleaner layout) ---
+        with st.expander("🔧 Known Issues", expanded=True):
+            st.caption("Select all that apply.")
+
+            iss_left, iss_right = st.columns(2, gap="large")
+            selected_issues = []
+
+            half_i = (len(known_issues_list) + 1) // 2
+            left_issues = known_issues_list[:half_i]
+            right_issues = known_issues_list[half_i:]
+
+            def _issue_key(i: str) -> str:
+                safe = i.lower().replace(" ", "_").replace("/", "_").replace("-", "_")
+                return f"issue_{safe}_{_upload_key}"
+
+            with iss_left:
+                for issue in left_issues:
+                    if st.checkbox(issue, key=_issue_key(issue)):
+                        selected_issues.append(issue)
+
+            with iss_right:
+                for issue in right_issues:
+                    if st.checkbox(issue, key=_issue_key(issue)):
+                        selected_issues.append(issue)
+
+            other_issues = st.text_input(
+                "Other issues (if not listed above)",
+                placeholder="Describe any other segmentation issues...",
+                key=f"other_issues_{_upload_key}",
+            )
+
+        # --- Comments + attachments (same data) ---
+        with st.expander("💬 Overall Comments & Attachments", expanded=True):
+            feedback_text = st.text_area(
+                "General feedback about this segmentation",
+                height=150,
+                placeholder="Provide any general comments about segmentation quality, clinical relevance, or suggestions for improvement...",
+                key=f"overall_feedback_text_{_upload_key}",
+            )
+            attachments = st.file_uploader(
+                "Screenshots / attachments",
+                accept_multiple_files=True,
+                key=f"overall_attachments_{_upload_key}",
+            )
+
+        st.divider()
+
+        submitted = st.form_submit_button(
+            "Save Overall Assessment",
+            type="primary",
+            use_container_width=True,
+        )
+
+    # ---- Submit handler OUTSIDE the form UI ----
+    if submitted:
+        if not author_name.strip():
+            st.error("Name is required to submit feedback.")
+        else:
+            # Build JSON ONLY on submit (no doctor-facing preview)
+            overall_payload_json = {
+                "feedback_type": "overall_assessment",
+                "upload_id": active_upload_id,
+                "author": {
+                    "name": author_name.strip(),
+                    "email": st.session_state.get("annotator_email", "") or "",
+                },
+                "ratings": {
+                    "bloodpool": {
+                        "value": int(bloodpool_rating),
+                        "label": rating_options[int(bloodpool_rating) - 1],
+                    },
+                    "structures": {
+                        abbr: {
+                            "value": int(rating),
+                            "label": rating_options[int(rating) - 1],
+                            "full_name": cardiac_classes.get(abbr, abbr),
+                        }
+                        for abbr, rating in class_ratings.items()
+                    },
+                },
+                "phenotypes": {
+                    "selected": selected_phenotypes,
+                    "other": other_phenotype.strip(),
+                },
+                "issues": {
+                    "selected": selected_issues,
+                    "other": other_issues.strip(),
+                },
+                "comments": {
+                    "overall_text": (feedback_text or "").strip(),
+                },
+                # purely metadata; actual files are sent via multipart as "attachments"
+                "attachments_meta": [
+                    {
+                        "filename": f.name,
+                        "content_type": f.type or "application/octet-stream",
+                        "size_bytes": len(f.getvalue()),
+                    }
+                    for f in (attachments or [])
+                ],
+                "meta": {
+                    "submitted_at_utc": datetime.now(timezone.utc).isoformat(),
+                    "client_timezone": "+05:30",
+                    "ui": "overall_assessment_form_v1",
+                },
+            }
+
+            overall_payload_json_str = json.dumps(overall_payload_json, separators=(",", ":"))
+
+            # Send JSON in text for now (same endpoint as slice feedback)
+            payload = {
+                "author_name": author_name.strip(),
+                "author_email": st.session_state.get("annotator_email", ""),
+                "text": overall_payload_json_str,
+            }
+
+            files = []
+            for file in attachments or []:
+                files.append((
+                    "attachments",
+                    (file.name, file.getvalue(), file.type or "application/octet-stream"),
+                ))
+
+            try:
+                with st.spinner("Submitting overall assessment..."):
+                    resp = requests.post(
+                        f"{backend_url}/api/uploads/{active_upload_id}/feedback/",
+                        data=payload,
+                        files=files if files else None,
+                        timeout=3600,
+                    )
+
+                if resp.status_code in (200, 201):
+                    st.success("✅ Overall assessment submitted successfully!")
+                    st.session_state.overall_feedback_submitted = True
+                    st.session_state["annotator_name"] = author_name.strip()
+                    st.rerun()
+                else:
+                    try:
+                        error_detail = resp.json().get("detail", "")
+                    except Exception:
+                        error_detail = resp.text
+                    st.error(f"Failed to submit assessment: {error_detail or resp.status_code}")
+
+            except requests.RequestException as e:
+                st.error(f"Failed to submit assessment: {e}")
+
 else:
-    if active_upload_id:
-        st.warning("Unable to load this upload. Try again later.")
-    else:
-        st.info("Provide an upload ID or upload a DICOM ZIP to begin.")
+    st.success("✅ Overall assessment already submitted for this sample.")
+    if st.button("🔄 Modify Assessment", key=f"modify_assessment_{active_upload_id}"):
+        st.session_state.overall_feedback_submitted = False
+        st.rerun()
