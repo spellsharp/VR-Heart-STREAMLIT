@@ -735,7 +735,7 @@ if not active_upload_id:
     st.stop()
 
 # Link to view previous comments on UploadDetail page
-st.link_button("📋 View previous comments", url=f"/UploadDetail?id={active_upload_id}")
+st.link_button("📋 View all comments", url=f"/UploadDetail?id={active_upload_id}")
 
 st.sidebar.title("Navigation")
 st.sidebar.page_link("app.py", label="Home", icon="🏠")
@@ -991,19 +991,21 @@ if not st.session_state.overall_feedback_submitted:
         "Patent Ductus Arteriosus (PDA)",
     ]
 
-    # Separate issue lists for bloodpool vs structural segmentation
     bloodpool_issues_list = [
         "Poor boundary definition",
         "Poor trabeculation/fine structure segmentation",
-        "Misclassification",
         "Floating artifacts",
+        "Missing structures",
+        "None"
     ]
 
-    structural_issues_list = [
+    classwise_issues_list = [
         "Poor boundary definition",
         "Poor trabeculation/fine structure segmentation",
-        "Misclassification",
         "Floating artifacts",
+        "Misclassification",
+        "Missing structures",
+        "None"
     ]
 
     # Put EVERYTHING into one form (UX win, same data)
@@ -1100,35 +1102,66 @@ if not st.session_state.overall_feedback_submitted:
                 key=f"other_phenotype_{_upload_key}",
             )
 
-        # --- Issues (same data, cleaner layout) ---
-        with st.expander("🔧 Known Issues", expanded=True):
+        # --- Bloodpool Issues ---
+        with st.expander("🩸 Bloodpool Segmentation Issues", expanded=False):
             st.caption("Select all that apply.")
 
-            iss_left, iss_right = st.columns(2, gap="large")
-            selected_issues = []
+            bp_left, bp_right = st.columns(2, gap="large")
+            selected_bloodpool_issues = []
 
-            half_i = (len(known_issues_list) + 1) // 2
-            left_issues = known_issues_list[:half_i]
-            right_issues = known_issues_list[half_i:]
+            half_bp = (len(bloodpool_issues_list) + 1) // 2
+            left_bp_issues = bloodpool_issues_list[:half_bp]
+            right_bp_issues = bloodpool_issues_list[half_bp:]
 
-            def _issue_key(i: str) -> str:
+            def _bloodpool_issue_key(i: str) -> str:
                 safe = i.lower().replace(" ", "_").replace("/", "_").replace("-", "_")
-                return f"issue_{safe}_{_upload_key}"
+                return f"bloodpool_issue_{safe}_{_upload_key}"
 
-            with iss_left:
-                for issue in left_issues:
-                    if st.checkbox(issue, key=_issue_key(issue)):
-                        selected_issues.append(issue)
+            with bp_left:
+                for issue in left_bp_issues:
+                    if st.checkbox(issue, key=_bloodpool_issue_key(issue)):
+                        selected_bloodpool_issues.append(issue)
 
-            with iss_right:
-                for issue in right_issues:
-                    if st.checkbox(issue, key=_issue_key(issue)):
-                        selected_issues.append(issue)
+            with bp_right:
+                for issue in right_bp_issues:
+                    if st.checkbox(issue, key=_bloodpool_issue_key(issue)):
+                        selected_bloodpool_issues.append(issue)
 
-            other_issues = st.text_input(
-                "Other issues (if not listed above)",
-                placeholder="Describe any other segmentation issues...",
-                key=f"other_issues_{_upload_key}",
+            other_bloodpool_issues = st.text_input(
+                "Other bloodpool issues (if not listed above)",
+                placeholder="Describe any other bloodpool segmentation issues...",
+                key=f"other_bloodpool_issues_{_upload_key}",
+            )
+
+        # --- Class-wise Issues ---
+        with st.expander("🏥 Class-wise Segmentation Issues", expanded=True):
+            st.caption("Select all that apply.")
+
+            cw_left, cw_right = st.columns(2, gap="large")
+            selected_classwise_issues = []
+
+            half_cw = (len(classwise_issues_list) + 1) // 2
+            left_cw_issues = classwise_issues_list[:half_cw]
+            right_cw_issues = classwise_issues_list[half_cw:]
+
+            def _classwise_issue_key(i: str) -> str:
+                safe = i.lower().replace(" ", "_").replace("/", "_").replace("-", "_")
+                return f"classwise_issue_{safe}_{_upload_key}"
+
+            with cw_left:
+                for issue in left_cw_issues:
+                    if st.checkbox(issue, key=_classwise_issue_key(issue)):
+                        selected_classwise_issues.append(issue)
+
+            with cw_right:
+                for issue in right_cw_issues:
+                    if st.checkbox(issue, key=_classwise_issue_key(issue)):
+                        selected_classwise_issues.append(issue)
+
+            other_classwise_issues = st.text_input(
+                "Other class-wise issues (if not listed above)",
+                placeholder="Describe any other class-wise segmentation issues...",
+                key=f"other_classwise_issues_{_upload_key}",
             )
 
         # --- Comments + attachments (same data) ---
@@ -1155,8 +1188,37 @@ if not st.session_state.overall_feedback_submitted:
 
     # ---- Submit handler OUTSIDE the form UI ----
     if submitted:
+        validation_errors = []
+
+        # Validate name
         if not author_name.strip():
-            st.error("Name is required to submit feedback.")
+            validation_errors.append("Name is required to submit feedback.")
+
+        # Validate all ratings are provided
+        if bloodpool_rating not in [1, 2, 3, 4, 5]:
+            validation_errors.append("Bloodpool rating must be selected.")
+
+        for abbr, rating in class_ratings.items():
+            if rating not in [1, 2, 3, 4, 5]:
+                full_name = cardiac_classes[abbr]
+                validation_errors.append(f"{full_name} rating must be selected.")
+
+        # Validate at least one phenotype is selected
+        if not selected_phenotypes and not other_phenotype.strip():
+            validation_errors.append("Please fill a CHD phenotype.")
+
+        # Validate at least one bloodpool issue is selected
+        if not selected_bloodpool_issues and not other_bloodpool_issues.strip():
+            validation_errors.append("Please fill bloodpool segmentation issues. If no issues, please select 'None'.")
+
+        # Validate at least one classwise issue is selected
+        if not selected_classwise_issues and not other_classwise_issues.strip():
+            validation_errors.append("Please fill class-wise segmentation issues. If no issues, please select 'None'.")
+
+        # Show all validation errors
+        if validation_errors:
+            for error in validation_errors:
+                st.error(error)
         else:
             # Build JSON ONLY on submit (no doctor-facing preview)
             overall_payload_json = {
@@ -1184,9 +1246,13 @@ if not st.session_state.overall_feedback_submitted:
                     "selected": selected_phenotypes,
                     "other": other_phenotype.strip(),
                 },
-                "issues": {
-                    "selected": selected_issues,
-                    "other": other_issues.strip(),
+                "bloodpool_issues": {
+                    "selected": selected_bloodpool_issues,
+                    "other": other_bloodpool_issues.strip(),
+                },
+                "classwise_issues": {
+                    "selected": selected_classwise_issues,
+                    "other": other_classwise_issues.strip(),
                 },
                 "comments": {
                     "overall_text": (feedback_text or "").strip(),

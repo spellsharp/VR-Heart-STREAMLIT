@@ -59,6 +59,75 @@ def fetch_attachment_bytes(url: str) -> bytes:
     return resp.content
 
 
+def format_feedback_content(fb: dict) -> str:
+    """Format feedback content based on feedback type."""
+    feedback_type = fb.get("feedback_type", "slice_comment")
+
+    if feedback_type == "overall_assessment":
+        oa = fb.get("overall_assessment", {})
+        if not oa:
+            return "Overall assessment data unavailable"
+
+        lines = ["**Overall Sample Assessment**"]
+
+        # Quality Ratings
+        lines.append("\n**Quality Ratings:**")
+        rating_options = ["Poor", "Fair", "Good", "Very Good", "Excellent"]
+        lines.append(f"- Bloodpool: {oa.get('bloodpool_rating', 0)}/5 ({rating_options[oa.get('bloodpool_rating', 1) - 1] if 1 <= oa.get('bloodpool_rating', 0) <= 5 else 'Unknown'})")
+
+        cardiac_classes = {
+            "lv_rating": "LV (Left Ventricle)",
+            "rv_rating": "RV (Right Ventricle)",
+            "la_rating": "LA (Left Atrium)",
+            "ra_rating": "RA (Right Atrium)",
+            "ao_rating": "AO (Aorta)",
+            "pa_rating": "PA (Pulmonary Artery)"
+        }
+
+        for field, label in cardiac_classes.items():
+            rating = oa.get(field, 0)
+            rating_text = rating_options[rating - 1] if 1 <= rating <= 5 else "Unknown"
+            lines.append(f"- {label}: {rating}/5 ({rating_text})")
+
+        # Phenotypes
+        phenotypes = [p.strip() for p in (oa.get("phenotypes") or "").split("\n") if p.strip()]
+        if phenotypes:
+            lines.append(f"\n**CHD Phenotypes:**")
+            lines.extend(f"- {p}" for p in phenotypes)
+
+        if oa.get("other_phenotype"):
+            lines.append(f"- Other: {oa['other_phenotype']}")
+
+        # Bloodpool Issues
+        bloodpool_issues = [i.strip() for i in (oa.get("bloodpool_issues") or "").split("\n") if i.strip()]
+        if bloodpool_issues:
+            lines.append(f"\n**Bloodpool Segmentation Issues:**")
+            lines.extend(f"- {i}" for i in bloodpool_issues)
+
+        if oa.get("other_bloodpool_issues"):
+            lines.append(f"- Other: {oa['other_bloodpool_issues']}")
+
+        # Class-wise Issues
+        classwise_issues = [i.strip() for i in (oa.get("classwise_issues") or "").split("\n") if i.strip()]
+        if classwise_issues:
+            lines.append(f"\n**Class-wise Segmentation Issues:**")
+            lines.extend(f"- {i}" for i in classwise_issues)
+
+        if oa.get("other_classwise_issues"):
+            lines.append(f"- Other: {oa['other_classwise_issues']}")
+
+        # Overall text
+        if oa.get("overall_text"):
+            lines.append(f"\n**General Comments:**")
+            lines.append(oa["overall_text"])
+
+        return "\n".join(lines)
+
+    else:
+        # Regular slice comment
+        return fb.get("text") or ""
+
+
 
 
 if isinstance(upload_id, list):
@@ -128,15 +197,152 @@ else:
 # st.divider()
 # st.subheader("Annotate")
 
+RATING_LABELS = {
+    1: ("Poor", "🔴"),
+    2: ("Fair", "🟠"),
+    3: ("Okay", "🟡"),
+    4: ("Good", "🟢"),
+    5: ("Great", "🟣"),
+}
+
+CANONICAL_CLASS_ORDER = ["Bloodpool", "LV", "RV", "LA", "RA", "AO", "PA"]
+
+def normalize_rating(v):
+    try:
+        v = int(v)
+    except Exception:
+        return None
+    return v if 1 <= v <= 5 else None
+
+def rating_badge(v):
+    v = normalize_rating(v)
+    if v is None:
+        return "—"
+    label, emoji = RATING_LABELS.get(v, ("", ""))
+    return f"{emoji} {v}/5 ({label})"
+
+def render_none_or_list(title: str, items):
+    st.markdown(f"**{title}**")
+    if not items:
+        st.success("None")
+        return
+    # items could be string or list
+    if isinstance(items, str):
+        items = [items]
+    if "None" in items:
+        st.write("None")
+        return
+        
+    for x in items:
+        if x != "None":
+            st.write(f"•    {x}")
+
+def render_overall_assessment(fb: dict):
+    oa = fb.get("overall_assessment") or {}
+    if not oa:
+        st.warning("Overall assessment missing in payload.")
+        with st.expander("Raw feedback payload"):
+            st.json(fb)
+        return
+
+    # ---- Ratings ----
+    ratings = {
+        "Bloodpool": oa.get("bloodpool_rating"),
+        "LV": oa.get("lv_rating"),
+        "RV": oa.get("rv_rating"),
+        "LA": oa.get("la_rating"),
+        "RA": oa.get("ra_rating"),
+        "AO": oa.get("ao_rating"),
+        "PA": oa.get("pa_rating"),
+    }
+
+    # normalize to int 1..5 or None
+    q_norm = {k: normalize_rating(v) for k, v in ratings.items()}
+    vals = [v for v in q_norm.values() if v is not None]
+    avg = (sum(vals) / len(vals)) if vals else None
+    poor_count = sum(1 for v in vals if v == 1)
+
+    # ---- Issues + phenotypes ----
+    phenotypes = [p.strip() for p in (oa.get("phenotypes") or "").split("\n") if p.strip()]
+    if oa.get("other_phenotype"):
+        phenotypes.append(f"Other: {oa.get('other_phenotype')}")
+
+    bp_issues = [i.strip() for i in (oa.get("bloodpool_issues") or "").split("\n") if i.strip()]
+    if oa.get("other_bloodpool_issues"):
+        bp_issues.append(f"Other: {oa.get('other_bloodpool_issues')}")
+
+    cw_issues = [i.strip() for i in (oa.get("classwise_issues") or "").split("\n") if i.strip()]
+    if oa.get("other_classwise_issues"):
+        cw_issues.append(f"Other: {oa.get('other_classwise_issues')}")
+
+    issue_flag = bool(bp_issues) or bool(cw_issues)
+
+    
+    # ---- Phenotypes ----
+    st.markdown("**CHD phenotypes**")
+    if phenotypes:
+        st.markdown(" ".join([f"`{p}`" for p in phenotypes]))
+    else:
+        st.caption("None provided")
+
+    st.divider()
+
+    # ---- Ratings table-ish ----
+    st.markdown("**Quality ratings (per structure)**")
+
+    # ---- Summary header ----
+    top = st.columns([2, 2, 2, 2])
+    with top[0]:
+        st.metric("Avg rating", f"{avg:.2f}/5" if avg is not None else "—")
+
+
+    order = ["Bloodpool", "LV", "RV", "LA", "RA", "AO", "PA"]
+    h1, h2, h3 = st.columns([1.2, 2.2, 2.6])
+    h1.markdown("**Class**")
+    h2.markdown("**Rating**")
+
+    for k in order:
+        v = q_norm.get(k)
+        c1, c2 = st.columns([1.2, 4.8])
+        with c1:
+            st.write(k)
+        with c2:
+            st.write(rating_badge(v))
+
+    st.divider()
+
+    # ---- Issues ----
+    render_none_or_list("Bloodpool segmentation issues", bp_issues)
+    st.divider()
+    render_none_or_list("Class-wise segmentation issues", cw_issues)
+
+    # ---- Comments ----
+    if oa.get("overall_text"):
+        st.divider()
+        st.markdown("**General comments**")
+        st.write(oa.get("overall_text"))
+    # with st.expander("Show raw overall_assessment JSON"):
+    #     st.json(oa)
+
+
 st.divider()
 st.subheader("Feedback")
 try:
     items = fetch_feedback(backend_url, upload_id)
     for fb in items:
         with st.container(border=True):
+            feedback_type = fb.get("feedback_type", "slice_comment")
+            type_label = "Overall Assessment" if feedback_type == "overall_assessment" else ""
             st.markdown(f"**{fb.get('author_name') or 'Anonymous'}**")
             st.caption(fb.get("author_email") or "")
-            st.write(fb.get("text") or "")
+            feedback_type = fb.get("feedback_type", "slice_comment")
+
+            if feedback_type == "overall_assessment":
+                render_overall_assessment(fb)
+            else:
+                formatted_content = format_feedback_content(fb)
+                st.markdown(formatted_content)
+
             for att in fb.get("attachments") or []:
                 download_url = att.get("download_url") or build_drive_link(att.get("drive_file_id"))
                 filename = att.get("filename") or "Attachment"
@@ -190,6 +396,9 @@ try:
                         st.session_state.pop(delete_key, None)
                         st.rerun()
                 else:
+                    st.write("")
+                    st.write("")
+                    st.write("")
                     if st.button(
                         "Delete feedback",
                         key=f"delete_feedback_{feedback_id}",
