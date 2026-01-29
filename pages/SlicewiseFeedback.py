@@ -977,18 +977,28 @@ if not st.session_state.overall_feedback_submitted:
         "PA": "Pulmonary Artery",
     }
 
+    # CHD phenotypes ordered by frequency (based on patient data analysis)
     chd_phenotypes = [
-        "Ventricular Septal Defect (VSD)",
-        "Atrial Septal Defect (ASD)",
-        "Tetralogy of Fallot (TOF)",
-        "Transposition of Great Arteries (TGA)",
+        "Double Outlet Right Ventricle (DORV)",          # ~53% - Most common
+        "Aortic Arch Anomaly",                           # ~16%
+        "Ventricular Septal Defect (VSD)",               # ~25% (often combined)
+        "Pulmonary Stenosis (PS)",                       # ~13% (often combined)
+        "Congenitally Corrected TGA (CCTGA)",            # ~9%
+        "Tetralogy of Fallot (TOF)",                     # ~9%
+        "Aortopulmonary Septal Defect (ATS)",            # ~7%
+        "Scimitar Syndrome",                             # ~5%
+        "Transposition of Great Arteries (TGA)",         # ~5%
+        "Criss Cross Heart",                             # ~4%
+        "Double Aortic Arch",                            # ~4%
         "Truncus Arteriosus",
-        "Double Outlet Right Ventricle (DORV)",
         "Hypoplastic Left Heart Syndrome (HLHS)",
+        "Atrial Septal Defect (ASD)",
         "Coarctation of Aorta",
-        "Pulmonary Stenosis",
         "Aortic Stenosis",
         "Patent Ductus Arteriosus (PDA)",
+        "TOF with Pulmonary Atresia (TOF/PA)",
+        "TOF with MAPCAs",
+        "Normal Heart",
     ]
 
     bloodpool_issues_list = [
