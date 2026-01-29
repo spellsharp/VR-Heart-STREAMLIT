@@ -998,7 +998,6 @@ if not st.session_state.overall_feedback_submitted:
         "Patent Ductus Arteriosus (PDA)",
         "TOF with Pulmonary Atresia (TOF/PA)",
         "TOF with MAPCAs",
-        "Normal Heart",
     ]
 
     bloodpool_issues_list = [
