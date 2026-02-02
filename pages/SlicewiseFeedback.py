@@ -630,12 +630,6 @@ def open_feedback_dialog(img_rgb, view_name, slice_num, original_filename, mask_
             "Your name *",
             key=f"annotator_name_{view_name}_{slice_num}",
         )
-        source_selection = st.radio(
-            "Source",
-            ["Internal (AIMS Hospital)", "External"],
-            horizontal=True,
-            key=f"source_{view_name}_{slice_num}"
-        )
         text_feedback = st.text_area(
             "Comments",
             placeholder="Enter your feedback about this slice...",
@@ -674,7 +668,6 @@ def open_feedback_dialog(img_rgb, view_name, slice_num, original_filename, mask_
             "author_name": annotator_name.strip(),
             "author_email": st.session_state.get("annotator_email", ""),
             "text": text_feedback or "",
-            "source": "internal" if source_selection.startswith("Internal") else "external",
         }
 
         if not upload_id:
@@ -1085,6 +1078,16 @@ if not st.session_state.overall_feedback_submitted:
                         horizontal=True,
                     )
                     class_ratings[abbr] = rating_values[idx]
+        
+        # --- Source ---
+        st.divider()
+        st.markdown("**Source**")
+        source_val = st.radio(
+            "Source",
+            ["Internal (Hospital)", "External"],
+            horizontal=True,
+            key=f"overall_source_{_upload_key}"
+        )
 
         # --- Phenotypes (same data, less visually brutal) ---
         with st.expander("🏥 CHD Phenotypes", expanded=False):
@@ -1296,6 +1299,7 @@ if not st.session_state.overall_feedback_submitted:
                 "author_name": author_name.strip(),
                 "author_email": st.session_state.get("annotator_email", ""),
                 "text": overall_payload_json_str,
+                "source": "internal" if source_val.startswith("Internal") else "external",
             }
 
             files = []
