@@ -417,11 +417,17 @@ st.subheader("Add Feedback")
 with st.form("feedback_form", clear_on_submit=True):
     author_name = st.text_input("Your name", value="")
     # author_email = st.text_input("Your email (optional)", value="")
+    # source_val = st.radio("Source", ["Internal (AIMS Hospital)", "External"], horizontal=True)
     text = st.text_area("Feedback", height=150)
     attachments = st.file_uploader("Screenshots / attachments", accept_multiple_files=True)
     if st.form_submit_button("Submit Feedback"):
         try:
-            payload = {"author_name": author_name, "author_email": "", "text": text}
+            payload = {
+                "author_name": author_name,
+                "author_email": "",
+                "text": text,
+                "source": "internal" if source_val.startswith("Internal") else "external",
+            }
             files = []
             for file in attachments or []:
                 files.append(
