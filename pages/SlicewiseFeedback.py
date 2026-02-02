@@ -1030,6 +1030,14 @@ if not st.session_state.overall_feedback_submitted:
 
         st.divider()
 
+        # --- Source ---
+        source_val = st.radio(
+            "Source",
+            ["Internal (AIMS Hospital)", "External"],
+            horizontal=True,
+            key=f"overall_source_{_upload_key}"
+        )
+
         # --- Ratings (same data, cleaner structure) ---
         with st.expander("⭐ Quality Ratings", expanded=True):
             st.markdown("**Bloodpool Segmentation Quality**")
@@ -1079,16 +1087,6 @@ if not st.session_state.overall_feedback_submitted:
                     )
                     class_ratings[abbr] = rating_values[idx]
         
-        # --- Source ---
-        st.divider()
-        st.markdown("**Source**")
-        source_val = st.radio(
-            "Source",
-            ["Internal (AIMS Hospital)", "External"],
-            horizontal=True,
-            key=f"overall_source_{_upload_key}"
-        )
-
         # --- Phenotypes (same data, less visually brutal) ---
         with st.expander("🏥 CHD Phenotypes", expanded=False):
             st.caption("Select all that apply.")
