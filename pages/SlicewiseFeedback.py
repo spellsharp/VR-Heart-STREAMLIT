@@ -1084,7 +1084,7 @@ if not st.session_state.overall_feedback_submitted:
         st.markdown("**Source**")
         source_val = st.radio(
             "Source",
-            ["Internal (Hospital)", "External"],
+            ["Internal (AIMS Hospital)", "External"],
             horizontal=True,
             key=f"overall_source_{_upload_key}"
         )
@@ -1233,6 +1233,9 @@ if not st.session_state.overall_feedback_submitted:
         # Validate at least one classwise issue is selected
         if not selected_classwise_issues and not other_classwise_issues.strip():
             validation_errors.append("Please fill class-wise segmentation issues. If no issues, please select 'None'.")
+
+        if not source_val:
+            validation_errors.append("Please select a source.")
 
         # Show all validation errors
         if validation_errors:
