@@ -47,7 +47,7 @@ def build_detail_url(upload_id):
 def build_annotate_url(upload_id):
     if not upload_id:
         return None
-    return f"/SlicewiseFeedback?id={upload_id}"
+    return f"/OverallAssessment?id={upload_id}"
 @st.cache_data(ttl=30, show_spinner=False)
 def fetch_uploads(api_base: str):
     try:

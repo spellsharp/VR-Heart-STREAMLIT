@@ -741,6 +741,36 @@ st.sidebar.title("Navigation")
 st.sidebar.page_link("app.py", label="Home", icon="🏠")
 st.sidebar.page_link("pages/Dashboard.py", label="Dashboard", icon="🗂️")
 
+# --- Download Output File ---
+try:
+    _detail = get_cached_upload_detail(backend_url, active_upload_id)
+    _output_file_id = _detail.get("drive_output_file_id") or _detail.get("drive_combined_file_id")
+    if _output_file_id:
+        _dl_kind = "output" if _detail.get("drive_output_file_id") else "combined"
+        _dl_filename = (
+            _detail.get("output_filename")
+            or _detail.get("combined_filename")
+            or f"{active_upload_id}_output.zip"
+        )
+        with st.spinner("Preparing output file for download..."):
+            _dl_entry = get_cached_upload_archive(
+                backend_url, active_upload_id, _dl_kind, _dl_filename,
+            )
+        _dl_path = _dl_entry.get("path")
+        if _dl_path and os.path.exists(_dl_path):
+            with open(_dl_path, "rb") as _f:
+                _dl_bytes = _f.read()
+            st.download_button(
+                label="📥 Download Output File",
+                data=_dl_bytes,
+                file_name=_dl_filename,
+                mime="application/zip",
+            )
+    else:
+        st.info("Output file not yet available for this upload.")
+except requests.RequestException as _exc:
+    st.warning(f"Could not fetch output file info: {_exc}")
+
 # --- Slice-wise DICOM viewer commented out ---
 # st.sidebar.header("Image Controls")
 # level = st.sidebar.slider("Window Level", -1000, 1000, 200)
@@ -951,9 +981,6 @@ st.sidebar.page_link("pages/Dashboard.py", label="Dashboard", icon="🗂️")
 #             open_feedback_dialog(img_x, "Sagittal", x_idx, dicom_filename, active_mask_name, upload_id=active_upload_id or None)
 
 # --- Overall Sample Assessment ---
-st.divider()
-# --- Overall Sample Assessment ---
-st.divider()
 st.header("Overall Sample Assessment")
 
 # Initialize session state for overall feedback

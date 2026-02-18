@@ -196,7 +196,7 @@ if uploaded_file and st.button("🚀 Get Prediction"):
                         )
                     with col2:
                         if upload_id:
-                            st.link_button("💬 Add Comments", f"/SlicewiseFeedback?id={upload_id}")
+                            st.link_button("💬 Add Comments", f"/OverallAssessment?id={upload_id}")
 
                     if upload_id and not server_finalized:
                         try:
