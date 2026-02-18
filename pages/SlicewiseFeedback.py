@@ -17,7 +17,7 @@ import requests
 from PIL import Image
 from typing import Any
 
-st.set_page_config(layout="wide", page_title="Slice-wise Feedback")
+st.set_page_config(layout="wide", page_title="Feedback")
 backend_url = st.secrets["BACKEND_URL"]
 logger = logging.getLogger("annotation_feedback")
 logger.setLevel(logging.INFO)
@@ -709,7 +709,7 @@ def open_feedback_dialog(img_rgb, view_name, slice_num, original_filename, mask_
 
 # --- Main Application Logic ---
 
-st.title("Slice-wise Feedback")
+st.title("Feedback")
 
 params = st.query_params
 upload_id_param = params.get("id")
@@ -739,217 +739,260 @@ st.sidebar.title("Navigation")
 st.sidebar.page_link("app.py", label="Home", icon="🏠")
 st.sidebar.page_link("pages/Dashboard.py", label="Dashboard", icon="🗂️")
 
-st.sidebar.header("Image Controls")
-level = st.sidebar.slider("Window Level", -1000, 1000, 200)
-width = st.sidebar.slider("Window Width", 1, 2000, 600)
+# st.sidebar.header("Image Controls")
+# level = st.sidebar.slider("Window Level", -1000, 1000, 200)
+# width = st.sidebar.slider("Window Width", 1, 2000, 600)
 
-status_placeholder = st.empty()
-drive_detail = None
-drive_zip_entry = None
-drive_zip_path = None
-drive_filename = None
-results_zip_entry = None
+# --- Slice-wise DICOM viewer commented out ---
+# status_placeholder = st.empty()
+# drive_detail = None
+# drive_zip_entry = None
+# drive_zip_path = None
+# drive_filename = None
+# results_zip_entry = None
+#
+# if active_upload_id:
+#     try:
+#         with st.spinner("Fetching study details..."):
+#             drive_detail = get_cached_upload_detail(backend_url, active_upload_id)
+#             download_kind = "input"
+#             download_filename = (
+#                 drive_detail.get("input_filename")
+#                 or drive_detail.get("original_filename")
+#                 or f"{active_upload_id}.zip"
+#             )
+#             if not drive_detail.get("drive_input_file_id"):
+#                 if drive_detail.get("drive_combined_file_id"):
+#                     download_kind = "combined"
+#                     download_filename = drive_detail.get("combined_filename") or download_filename
+#                 elif drive_detail.get("drive_output_file_id"):
+#                     download_kind = "output"
+#                     download_filename = drive_detail.get("output_filename") or download_filename
+#                 else:
+#                     raise ValueError("This upload does not have any downloadable archives yet.")
+#             drive_zip_entry = get_cached_upload_archive(
+#                 backend_url,
+#                 active_upload_id,
+#                 download_kind,
+#                 download_filename,
+#             )
+#             drive_zip_path = drive_zip_entry.get("path")
+#             drive_filename = drive_zip_entry.get("filename") or download_filename
+#
+#             mask_kind = None
+#             if drive_detail.get("drive_combined_file_id"):
+#                 mask_kind = "combined"
+#             elif drive_detail.get("drive_output_file_id"):
+#                 mask_kind = "output"
+#             mask_filename = None
+#             if mask_kind == "combined":
+#                 mask_filename = drive_detail.get("combined_filename") or drive_filename
+#             elif mask_kind == "output":
+#                 mask_filename = drive_detail.get("output_filename") or drive_filename
+#
+#             if mask_kind:
+#                 if mask_kind == download_kind:
+#                     results_zip_entry = drive_zip_entry
+#                 else:
+#                     results_zip_entry = get_cached_upload_archive(
+#                         backend_url,
+#                         active_upload_id,
+#                         mask_kind,
+#                         mask_filename,
+#                     )
+#         status_placeholder.success(f"Loaded {drive_filename or download_filename}.")
+#     except requests.HTTPError as exc:
+#         detail_msg = exc.response.text if exc.response is not None else str(exc)
+#         status_placeholder.error(f"Failed to load upload {active_upload_id}: {detail_msg}")
+#         clear_active_volume_state(reason="Drive fetch HTTP error")
+#     except requests.RequestException as exc:
+#         status_placeholder.error(f"Failed to load upload {active_upload_id}: {exc}")
+#         clear_active_volume_state(reason="Drive fetch request exception")
+#     except ValueError as exc:
+#         status_placeholder.error(str(exc))
+#         drive_zip = None
+#         clear_active_volume_state(reason="Drive fetch value error")
+#
+# dicom_zip = drive_zip_path
+# dicom_source_key = None
+# if drive_zip_path and active_upload_id:
+#     dicom_source_key = f"drive:{active_upload_id}:{download_kind}"
+#
+# volume_ready = False
+# volume_bundle: dict[str, Any] | None = None
+# if dicom_zip and dicom_source_key:
+#     volume_ready = ensure_volume_loaded(dicom_zip, dicom_source_key, drive_filename)
+#     if volume_ready:
+#         active_key = st.session_state.get("dicom_source_key")
+#         if active_key:
+#             volume_bundle = get_global_volume(active_key)
+# else:
+#     existing_key = st.session_state.get("dicom_source_key")
+#     if existing_key:
+#         volume_bundle = get_global_volume(existing_key)
+#         volume_ready = volume_bundle is not None
+#
+# dicom_filename = st.session_state.get(
+#     "dicom_filename",
+#     drive_filename or (os.path.basename(dicom_zip) if isinstance(dicom_zip, (str, os.PathLike)) else "dicom.zip"),
+# )
+#
+# if volume_ready and volume_bundle:
+#     vol = volume_bundle["vol"]
+#     spacing = volume_bundle["spacing"]
+#     dicom_image = volume_bundle["dicom_image"]
+#
+#     masks = volume_bundle.setdefault("masks", {})
+#     active_mask_name = st.session_state.get("active_mask", "None")
+#
+#     dicom_key = st.session_state.get("dicom_source_key")
+#     auto_key = volume_bundle.get("auto_mask_source")
+#     if results_zip_entry and dicom_key and dicom_key != auto_key:
+#         auto_masks = extract_masks_from_zip(results_zip_entry, dicom_image)
+#         if auto_masks:
+#             masks.update(auto_masks)
+#             volume_bundle["auto_mask_source"] = dicom_key
+#             if st.session_state.get("active_mask", "None") == "None":
+#                 st.session_state["active_mask"] = next(iter(auto_masks.keys()))
+#
+#     mask = masks.get(active_mask_name) if active_mask_name != "None" else None
+#     show_mask = mask is not None and active_mask_name != "None"
+#     color_map = None
+#     if show_mask and mask is not None:
+#         color_map, _ = get_color_mapping(np.unique(mask))
+#
+#     # Mask selection in sidebar
+#     if masks:
+#         st.sidebar.divider()
+#         st.sidebar.header("Mask Selection")
+#         mask_options = ["None"] + list(masks.keys())
+#         selected_mask = st.sidebar.radio(
+#             "Select Active Mask",
+#             options=mask_options,
+#             index=mask_options.index(st.session_state.get("active_mask", "None"))
+#             if st.session_state.get("active_mask", "None") in mask_options
+#             else 0,
+#             help="Only one mask can be active at a time",
+#         )
+#         st.session_state["active_mask"] = selected_mask
+#         active_mask_name = selected_mask
+#         show_mask = active_mask_name != "None"
+#         mask = masks.get(active_mask_name) if show_mask else None
+#         if show_mask and mask is not None:
+#             color_map, _ = get_color_mapping(np.unique(mask))
+#         else:
+#             color_map = None
+#
+#     # Color legend in sidebar
+#     if color_map is not None and mask is not None:
+#         _, label_names = get_color_mapping(np.unique(mask))
+#         st.sidebar.divider()
+#         st.sidebar.subheader("📋 Label Color Map")
+#         legend_box_html = """
+#         <div style='
+#             border-radius: 10px;
+#             padding: 12px 16px;
+#             box-shadow: 0 1.5px 10px rgba(0,0,0,0.07);
+#             margin-bottom: 12px;
+#             border: 1.7px solid #d4dde7;
+#         '>
+#         """
+#         for class_val in sorted(color_map.keys()):
+#             color = color_map[class_val]
+#             label = label_names.get(class_val, f"Class {class_val}")
+#             color_hex = f"#{color[0]:02x}{color[1]:02x}{color[2]:02x}"
+#             legend_box_html += (
+#                 f"<div style='display: flex; align-items: center; gap: 8px; margin-bottom: 6px;'>"
+#                 f"<div style='width:16px; height:16px; background:{color_hex}; border-radius: 3px;'></div>"
+#                 f"<span style='font-size:13px;'><strong>{class_val}</strong>: {label}</span>"
+#                 f"</div>"
+#             )
+#         legend_box_html += "</div>"
+#         st.sidebar.markdown(legend_box_html, unsafe_allow_html=True)
+#
+#     if active_mask_name != "None":
+#         st.info(f"Active Mask: **{active_mask_name}**")
+#
+#     col_ax, col_cor, col_sag = st.columns(3)
+#     asp_coronal = spacing[2] / spacing[0]
+#     asp_sagittal = spacing[2] / spacing[1]
+#
+#     with col_ax:
+#         st.subheader("Axial")
+#         z_idx = st.slider("Z Slice", 0, vol.shape[0] - 1, vol.shape[0] // 2)
+#         mask_slice = mask[z_idx, :, :] if mask is not None and show_mask else None
+#         img_z = process_slice(vol[z_idx, :, :], mask_slice, level, width, 1.0, color_map)
+#         st.image(img_z, use_container_width=True)
+#         if st.button("💬 Add comments", key="btn_z"):
+#             open_feedback_dialog(img_z, "Axial", z_idx, dicom_filename, active_mask_name, upload_id=active_upload_id or None)
+#
+#     with col_cor:
+#         st.subheader("Coronal")
+#         y_idx = st.slider("Y Slice", 0, vol.shape[1] - 1, vol.shape[1] // 2)
+#         slice_img = np.flipud(vol[:, y_idx, :])
+#         mask_slice = np.flipud(mask[:, y_idx, :]) if mask is not None and show_mask else None
+#         img_y = process_slice(slice_img, mask_slice, level, width, asp_coronal, color_map)
+#         st.image(img_y, use_container_width=True)
+#         if st.button("💬 Add comments", key="btn_y"):
+#             open_feedback_dialog(img_y, "Coronal", y_idx, dicom_filename, active_mask_name, upload_id=active_upload_id or None)
+#
+#     with col_sag:
+#         st.subheader("Sagittal")
+#         x_idx = st.slider("X Slice", 0, vol.shape[2] - 1, vol.shape[2] // 2)
+#         slice_img = np.flipud(vol[:, :, x_idx])
+#         mask_slice = np.flipud(mask[:, :, x_idx]) if mask is not None and show_mask else None
+#         img_x = process_slice(slice_img, mask_slice, level, width, asp_sagittal, color_map)
+#         st.image(img_x, use_container_width=True)
+#         if st.button("💬 Add comments", key="btn_x"):
+#             open_feedback_dialog(img_x, "Sagittal", x_idx, dicom_filename, active_mask_name, upload_id=active_upload_id or None)
+#
+# elif volume_ready and not volume_bundle:
+#     st.error("Volume metadata loaded but cache entry missing. Please reload this page.")
+#     st.stop()
+# else:
+#     if active_upload_id:
+#         st.warning("Unable to load this upload. Try again later.")
+#     else:
+#         st.info("Provide an upload ID or upload a DICOM ZIP to begin.")
 
-if active_upload_id:
-    try:
-        with st.spinner("Fetching study details..."):
-            drive_detail = get_cached_upload_detail(backend_url, active_upload_id)
-            download_kind = "input"
-            download_filename = (
-                drive_detail.get("input_filename")
-                or drive_detail.get("original_filename")
-                or f"{active_upload_id}.zip"
-            )
-            if not drive_detail.get("drive_input_file_id"):
-                if drive_detail.get("drive_combined_file_id"):
-                    download_kind = "combined"
-                    download_filename = drive_detail.get("combined_filename") or download_filename
-                elif drive_detail.get("drive_output_file_id"):
-                    download_kind = "output"
-                    download_filename = drive_detail.get("output_filename") or download_filename
-                else:
-                    raise ValueError("This upload does not have any downloadable archives yet.")
-            drive_zip_entry = get_cached_upload_archive(
-                backend_url,
-                active_upload_id,
-                download_kind,
-                download_filename,
-            )
-            drive_zip_path = drive_zip_entry.get("path")
-            drive_filename = drive_zip_entry.get("filename") or download_filename
+# --- Overall Assessment Section ---
+st.subheader("📝 Overall Assessment")
 
-            mask_kind = None
-            if drive_detail.get("drive_combined_file_id"):
-                mask_kind = "combined"
-            elif drive_detail.get("drive_output_file_id"):
-                mask_kind = "output"
-            mask_filename = None
-            if mask_kind == "combined":
-                mask_filename = drive_detail.get("combined_filename") or drive_filename
-            elif mask_kind == "output":
-                mask_filename = drive_detail.get("output_filename") or drive_filename
-
-            if mask_kind:
-                if mask_kind == download_kind:
-                    results_zip_entry = drive_zip_entry
-                else:
-                    results_zip_entry = get_cached_upload_archive(
-                        backend_url,
-                        active_upload_id,
-                        mask_kind,
-                        mask_filename,
-                    )
-        status_placeholder.success(f"Loaded {drive_filename or download_filename}.")
-    except requests.HTTPError as exc:
-        detail_msg = exc.response.text if exc.response is not None else str(exc)
-        status_placeholder.error(f"Failed to load upload {active_upload_id}: {detail_msg}")
-        clear_active_volume_state(reason="Drive fetch HTTP error")
-    except requests.RequestException as exc:
-        status_placeholder.error(f"Failed to load upload {active_upload_id}: {exc}")
-        clear_active_volume_state(reason="Drive fetch request exception")
-    except ValueError as exc:
-        status_placeholder.error(str(exc))
-        drive_zip = None
-        clear_active_volume_state(reason="Drive fetch value error")
-
-dicom_zip = drive_zip_path
-dicom_source_key = None
-if drive_zip_path and active_upload_id:
-    dicom_source_key = f"drive:{active_upload_id}:{download_kind}"
-
-volume_ready = False
-volume_bundle: dict[str, Any] | None = None
-if dicom_zip and dicom_source_key:
-    volume_ready = ensure_volume_loaded(dicom_zip, dicom_source_key, drive_filename)
-    if volume_ready:
-        active_key = st.session_state.get("dicom_source_key")
-        if active_key:
-            volume_bundle = get_global_volume(active_key)
-else:
-    existing_key = st.session_state.get("dicom_source_key")
-    if existing_key:
-        volume_bundle = get_global_volume(existing_key)
-        volume_ready = volume_bundle is not None
-
-dicom_filename = st.session_state.get(
-    "dicom_filename",
-    drive_filename or (os.path.basename(dicom_zip) if isinstance(dicom_zip, (str, os.PathLike)) else "dicom.zip"),
+annotator_name = st.text_input("Your name *", key="overall_annotator_name")
+text_feedback = st.text_area(
+    "Comments",
+    placeholder="Enter your overall feedback...",
+    height=300,
+    label_visibility="collapsed",
 )
 
-if volume_ready and volume_bundle:
-    vol = volume_bundle["vol"]
-    spacing = volume_bundle["spacing"]
-    dicom_image = volume_bundle["dicom_image"]
-
-    masks = volume_bundle.setdefault("masks", {})
-    active_mask_name = st.session_state.get("active_mask", "None")
-
-    dicom_key = st.session_state.get("dicom_source_key")
-    auto_key = volume_bundle.get("auto_mask_source")
-    if results_zip_entry and dicom_key and dicom_key != auto_key:
-        auto_masks = extract_masks_from_zip(results_zip_entry, dicom_image)
-        if auto_masks:
-            masks.update(auto_masks)
-            volume_bundle["auto_mask_source"] = dicom_key
-            if st.session_state.get("active_mask", "None") == "None":
-                st.session_state["active_mask"] = next(iter(auto_masks.keys()))
-
-    mask = masks.get(active_mask_name) if active_mask_name != "None" else None
-    show_mask = mask is not None and active_mask_name != "None"
-    color_map = None
-    if show_mask and mask is not None:
-        color_map, _ = get_color_mapping(np.unique(mask))
-
-    # Mask selection in sidebar
-    if masks:
-        st.sidebar.divider()
-        st.sidebar.header("Mask Selection")
-        mask_options = ["None"] + list(masks.keys())
-        selected_mask = st.sidebar.radio(
-            "Select Active Mask",
-            options=mask_options,
-            index=mask_options.index(st.session_state.get("active_mask", "None"))
-            if st.session_state.get("active_mask", "None") in mask_options
-            else 0,
-            help="Only one mask can be active at a time",
-        )
-        st.session_state["active_mask"] = selected_mask
-        active_mask_name = selected_mask
-        show_mask = active_mask_name != "None"
-        mask = masks.get(active_mask_name) if show_mask else None
-        if show_mask and mask is not None:
-            color_map, _ = get_color_mapping(np.unique(mask))
-        else:
-            color_map = None
-
-    # Color legend in sidebar
-    if color_map is not None and mask is not None:
-        _, label_names = get_color_mapping(np.unique(mask))
-        st.sidebar.divider()
-        st.sidebar.subheader("📋 Label Color Map")
-        legend_box_html = """
-        <div style='
-            border-radius: 10px;
-            padding: 12px 16px;
-            box-shadow: 0 1.5px 10px rgba(0,0,0,0.07);
-            margin-bottom: 12px;
-            border: 1.7px solid #d4dde7;
-        '>
-        """
-        for class_val in sorted(color_map.keys()):
-            color = color_map[class_val]
-            label = label_names.get(class_val, f"Class {class_val}")
-            color_hex = f"#{color[0]:02x}{color[1]:02x}{color[2]:02x}"
-            legend_box_html += (
-                f"<div style='display: flex; align-items: center; gap: 8px; margin-bottom: 6px;'>"
-                f"<div style='width:16px; height:16px; background:{color_hex}; border-radius: 3px;'></div>"
-                f"<span style='font-size:13px;'><strong>{class_val}</strong>: {label}</span>"
-                f"</div>"
-            )
-        legend_box_html += "</div>"
-        st.sidebar.markdown(legend_box_html, unsafe_allow_html=True)
-
-    if active_mask_name != "None":
-        st.info(f"Active Mask: **{active_mask_name}**")
-
-    col_ax, col_cor, col_sag = st.columns(3)
-    asp_coronal = spacing[2] / spacing[0]
-    asp_sagittal = spacing[2] / spacing[1]
-
-    with col_ax:
-        st.subheader("Axial")
-        z_idx = st.slider("Z Slice", 0, vol.shape[0] - 1, vol.shape[0] // 2)
-        mask_slice = mask[z_idx, :, :] if mask is not None and show_mask else None
-        img_z = process_slice(vol[z_idx, :, :], mask_slice, level, width, 1.0, color_map)
-        st.image(img_z, use_container_width=True)
-        if st.button("💬 Add comments", key="btn_z"):
-            open_feedback_dialog(img_z, "Axial", z_idx, dicom_filename, active_mask_name, upload_id=active_upload_id or None)
-
-    with col_cor:
-        st.subheader("Coronal")
-        y_idx = st.slider("Y Slice", 0, vol.shape[1] - 1, vol.shape[1] // 2)
-        slice_img = np.flipud(vol[:, y_idx, :])
-        mask_slice = np.flipud(mask[:, y_idx, :]) if mask is not None and show_mask else None
-        img_y = process_slice(slice_img, mask_slice, level, width, asp_coronal, color_map)
-        st.image(img_y, use_container_width=True)
-        if st.button("💬 Add comments", key="btn_y"):
-            open_feedback_dialog(img_y, "Coronal", y_idx, dicom_filename, active_mask_name, upload_id=active_upload_id or None)
-
-    with col_sag:
-        st.subheader("Sagittal")
-        x_idx = st.slider("X Slice", 0, vol.shape[2] - 1, vol.shape[2] // 2)
-        slice_img = np.flipud(vol[:, :, x_idx])
-        mask_slice = np.flipud(mask[:, :, x_idx]) if mask is not None and show_mask else None
-        img_x = process_slice(slice_img, mask_slice, level, width, asp_sagittal, color_map)
-        st.image(img_x, use_container_width=True)
-        if st.button("💬 Add comments", key="btn_x"):
-            open_feedback_dialog(img_x, "Sagittal", x_idx, dicom_filename, active_mask_name, upload_id=active_upload_id or None)
-
-elif volume_ready and not volume_bundle:
-    st.error("Volume metadata loaded but cache entry missing. Please reload this page.")
-    st.stop()
-else:
-    if active_upload_id:
-        st.warning("Unable to load this upload. Try again later.")
+if st.button("🚀 Submit Overall Comments", use_container_width=True):
+    if not annotator_name.strip():
+        st.error("Name is required to submit feedback.")
+    elif not active_upload_id:
+        st.error("Upload ID missing; cannot submit feedback.")
     else:
-        st.info("Provide an upload ID or upload a DICOM ZIP to begin.")
+        payload = {
+            "author_name": annotator_name.strip(),
+            "author_email": st.session_state.get("annotator_email", ""),
+            "text": text_feedback or "",
+        }
+        with st.spinner("Submitting feedback..."):
+            try:
+                resp = requests.post(
+                    f"{backend_url}/api/uploads/{active_upload_id}/feedback/",
+                    data=payload,
+                    timeout=3600,
+                )
+            except requests.RequestException as exc:
+                st.error(f"Failed to submit feedback: {exc}")
+            else:
+                if resp.status_code in (200, 201):
+                    st.success("✅ Feedback submitted.")
+                else:
+                    detail_msg = ""
+                    try:
+                        detail_msg = resp.json().get("detail", "")
+                    except Exception:
+                        detail_msg = resp.text
+                    st.error(f"Failed to submit feedback: {detail_msg or resp.status_code}")
